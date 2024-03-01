@@ -2,96 +2,13 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"fmt"
-	"gopkg.in/yaml.v2"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
+
+	"gopkg.in/yaml.v2"
 )
-
-/* Config */
-
-const CONFIG_NAME = "config.yml"
-
-type CommandConfig struct{}
-
-type CacheConfig struct {
-	MaxEntries int `yaml:"max_entries"`
-}
-
-type Config struct {
-	// List of commands to memoize
-	Commands map[string]CommandConfig `yaml:"memoize_commands"`
-	Cache    CacheConfig              `yaml:"cache"`
-}
-
-/* Storage */
-type Store struct {
-	Dir string
-}
-
-type CacheKey struct {
-	Hash string
-}
-
-func (c *Store) KeyFrom(command string, args []string) CacheKey {
-	concatCmd := command + " " + strings.Join(args, " ")
-	h := sha256.Sum256([]byte(concatCmd))
-	return CacheKey{
-		Hash: fmt.Sprintf("%x", h[:]),
-	}
-}
-
-func (s *Store) stdoutPath(key CacheKey) string {
-	return filepath.Join(s.KeyDir(key), "out")
-}
-
-func (s *Store) stderrPath(key CacheKey) string {
-	return filepath.Join(s.KeyDir(key), "err")
-}
-
-func (s *Store) exitcodePath(key CacheKey) string {
-	return filepath.Join(s.KeyDir(key), "status")
-}
-
-func (s *Store) WriteToCache(key CacheKey, stdout, stderr []byte, exitCode int) error {
-	cacheDir := s.KeyDir(key)
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(s.stdoutPath(key), stdout, 0644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(s.stderrPath(key), stderr, 0644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(s.exitcodePath(key), []byte(fmt.Sprint(exitCode)), 0644); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (s *Store) ReadFromCache(key CacheKey) (stdout, stderr []byte, exitCode int, err error) {
-	stdout, err = os.ReadFile(s.stdoutPath(key))
-	if err != nil {
-		return
-	}
-	stderr, err = os.ReadFile(s.stderrPath(key))
-	if err != nil {
-		return
-	}
-	exitCodeBytes, err := os.ReadFile(s.exitcodePath(key))
-	if err != nil {
-		return
-	}
-	exitCode, err = strconv.Atoi(string(exitCodeBytes))
-	return
-}
 
 /* Cachenv */
 
@@ -229,49 +146,63 @@ func (m *Cachenv) CreateActivateScript() error {
 	activateScriptPath := filepath.Join(m.Dir, "activate")
 
 	// Define the content of the activate script
-	activateScriptContent := fmt.Sprintf(`#!/bin/bash
-# DIR/activate - script to activate cachenv
+	activateScriptContent := fmt.Sprintf(`
+# This script must be invoked from your shell via 'source <cachenv>/activate'.
+# This script is heavily inspired by virtualenv's activate script.
 
-# Resolve the directory of this script
-CACHENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Save the current directory to revert back on deactivation
-export CACHENV_OLDPWD="$PWD"
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    echo "You must source this script: \$ source $0" >&2
+    exit 33
+fi
 
 # Check if already activated
-if [ -z "$CACHENV_ACTIVE" ]; then
-
-    # Function to deactivate cachenv and restore original environment
-    deactivate_cachenv() {
-        if [ -z "$CACHENV_ACTIVE" ]; then
-            echo "cachenv is not activated."
-            return
-        fi
-
-        # Restore the original PATH
-        export PATH="$CACHENV_OLD_PATH"
-        unset CACHENV_OLD_PATH
-        unset CACHENV_DIR
-        unset CACHENV_CONFIG
-		unset CACHENV_ACTIVE
-
-        # Remove the deactivate function
-        unset -f deactivate_cachenv
-
-        echo "cachenv deactivated."
-    }
-
-    export CACHENV_DIR
-	export CACHENV_OLD_PATH="$PATH"
-	export CACHENV_CONFIG="$CACHENV_DIR/%s"
-	export PATH="$CACHENV_DIR/bin:$PATH"
-    export CACHENV_ACTIVE=1
-
-	echo "cachenv activated. Use 'deactivate_cachenv' to deactivate."
-else
-	echo "cachenv is already activated."
+if ! [ -z "$CACHENV" ]; then
+    echo "cachenv is already activated."
+    exit 0
 fi
-`, CONFIG_NAME)
+
+# Function to deactivate cachenv and restore original environment
+deactivate_cachenv() {
+    if [ -z "$CACHENV" ]; then
+        echo "cachenv is not activated."
+        return
+    fi
+
+    # Restore the original PATH
+    export PATH="$_CACHENV_OLD_PATH"
+    unset _CACHENV_OLD_PATH
+    unset CACHENV
+
+    # Remove the deactivate function
+    unset -f deactivate_cachenv
+
+	# Makes hash forget past commands
+    hash -r 2>/dev/null
+
+    # Restore old prompt
+    if ! [ -z "${_CACHENV_OLD_PS1+_}" ] ; then
+        PS1="$_CACHENV_OLD_PS1"
+        export PS1
+        unset _CACHENV_OLD_PS1
+    fi
+}
+
+export CACHENV="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export _CACHENV_OLD_PATH="$PATH"
+export PATH="$CACHENV/bin:$PATH"
+
+# Makes hash forget past commands
+hash -r 2>/dev/null
+
+# Add a prefix to the shell prompt
+_CACHENV_OLD_PS1="${PS1-}"
+if [ "x" != x ] ; then
+    PS1="${PS1-}"
+else
+    PS1="($(basename "$CACHENV")) ${PS1-}"
+fi
+export PS1
+`)
 
 	// Ensure the bin directory exists
 	if err := os.MkdirAll(m.BinDir(), 0755); err != nil {
@@ -329,50 +260,55 @@ func (s *Store) Exists(key CacheKey) bool {
 	return !os.IsNotExist(err)
 }
 
-func (m *Cachenv) HandleMemoizedCommand(cmd string, args []string) {
+func (m *Cachenv) HandleMemoizedCommand(cmd string, args []string) int {
 	key := m.Store.KeyFrom(cmd, args)
+	var stdout, stderr []byte
+	var exitCode int
+	var err error
 
 	if m.Store.Exists(key) {
-		stdout, stderr, exitCode, err := m.Store.ReadFromCache(key)
+		stdout, stderr, exitCode, err = m.Store.ReadFromCache(key)
 		if err != nil {
-			fmt.Printf("Failed to read from cache: %v\n", err)
-			return
+			fmt.Fprintf(os.Stderr, "Failed to read from cache: %v\n", err)
+			return -1
 		}
-		fmt.Println("Output retrieved from cache:")
-		fmt.Println("Stdout:", string(stdout))
-		fmt.Println("Stderr:", string(stderr))
-		fmt.Println("Exit Code:", exitCode)
 	} else {
-		fmt.Println("Prepping command", cmd, args)
-		oldCmdPath := filepath.Join(m.OldBinDir(), cmd)
-		cmdExec := exec.Command(oldCmdPath, args...)
+		realCmdPath := filepath.Join(m.OldBinDir(), cmd)
+		cmd := exec.Command(realCmdPath, args...)
 		var stdoutBuf, stderrBuf bytes.Buffer
-		cmdExec.Stdout = &stdoutBuf
-		cmdExec.Stderr = &stderrBuf
-		fmt.Println("Running command")
-		err := cmdExec.Run()
-		fmt.Println("Done running command", stdoutBuf.Bytes(), stderrBuf.Bytes())
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
+
+		err = cmd.Run()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error executing command: %v\n", err)
+			return -1
+		}
+
 		exitCode := 0
 		if err != nil {
 			if exitError, ok := err.(*exec.ExitError); ok {
 				exitCode = exitError.ExitCode()
 			} else {
-				fmt.Printf("Error executing command: %v\n", err)
-				return
+				fmt.Fprintf(os.Stderr, "Error executing command: %v\n", err)
+				return -1
 			}
 		} else {
-			exitCode = cmdExec.ProcessState.ExitCode()
+			exitCode = cmd.ProcessState.ExitCode()
 		}
-		fmt.Println("Done getting exit code")
 
-		err = m.Store.WriteToCache(key, stdoutBuf.Bytes(), stderrBuf.Bytes(), exitCode)
+		stdout = stdoutBuf.Bytes()
+		stderr = stderrBuf.Bytes()
+		err = m.Store.WriteToCache(key, stdout, stderr, exitCode)
 		if err != nil {
-			fmt.Printf("Failed to write to cache: %v\n", err)
-			return
+			fmt.Fprintf(os.Stderr, "Failed to write to cache: %v\n", err)
+			return -1
 		}
-
-		fmt.Println("Command executed and output cached")
 	}
+
+	fmt.Fprint(os.Stdout, string(stdout))
+	fmt.Fprint(os.Stderr, string(stderr))
+	return exitCode
 }
 
 func main() {
@@ -388,8 +324,8 @@ func main() {
 		}
 		handleCachenvSubcommand(os.Args[1], os.Args[2:])
 	default:
-		handleMemoizedCommand(invokedCmd, os.Args[1:])
-		return
+		exitCode := handleMemoizedCommand(invokedCmd, os.Args[1:])
+		os.Exit(exitCode)
 	}
 }
 
@@ -420,7 +356,7 @@ func handleInit(args []string) {
 }
 
 func getActiveCachenvDir() (string, error) {
-	dir, ok := os.LookupEnv("CACHENV_DIR")
+	dir, ok := os.LookupEnv("CACHENV")
 	if !ok {
 		return "", fmt.Errorf("cachenv directory not set; please activate first.")
 	}
@@ -438,7 +374,7 @@ func handleLink(args []string) {
 	var err error
 	var dir string
 
-	// Get the desired cachenv dir from the first arg or CACHENV_DIR
+	// Get the desired cachenv dir from the first arg or CACHENV
 	if len(args) == 1 {
 		dir = args[0]
 	} else {
@@ -501,17 +437,17 @@ func handleAdd(args []string) {
 }
 
 // HandleMemoizedCommand handles the execution of a memoized command
-func handleMemoizedCommand(cmd string, args []string) {
-	dir := os.Getenv("CACHENV_DIR")
+func handleMemoizedCommand(cmd string, args []string) int {
+	dir := os.Getenv("CACHENV")
 	if dir == "" {
 		fmt.Println("Error: cachenv directory not set. Cannot execute memoized command.")
-		return
+		return -1
 	}
 
 	cachenv := loadCachenvFromDir(dir)
 	if err := cachenv.LoadConfig(); err != nil {
 		fmt.Printf("Error loading config for memoized command '%s': %v\n", cmd, err)
-		return
+		return -1
 	}
-	cachenv.HandleMemoizedCommand(cmd, args)
+	return cachenv.HandleMemoizedCommand(cmd, args)
 }
