@@ -390,21 +390,14 @@ func loadCachenvFromDir(dir string) *Cachenv {
 	return NewCachenv(filepath.Join(dir, CONFIG_NAME), dir)
 }
 
-// Supports both:
-// - `cachenv link DIR`
 // - `cachenv link` while activated
 func handleLink(args []string) {
 	var err error
 	var dir string
 
-	// Get the desired cachenv dir from the first arg or CACHENV
-	if len(args) == 1 {
-		dir = args[0]
-	} else {
-		if dir, err = getActiveCachenvDir(); err != nil {
-			fmt.Printf("Error loading config: %v\n", err)
-			return
-		}
+	if dir, err = getActiveCachenvDir(); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
 	}
 
 	cachenv := loadCachenvFromDir(dir)
