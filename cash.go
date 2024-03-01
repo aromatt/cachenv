@@ -170,10 +170,16 @@ func (m *Cash) LinkCommands() error {
 	// Iterate over commands from the config file
 	for cmd := range m.Config.Commands {
 		symlinkPath := filepath.Join(binDir, cmd)
-		// Remove existing symlink if it exists. We create all new symlinks to
-		// make sure they point to the current location of the cash executable.
+		ogbinPath := filepath.Join(ogbinDir, cmd)
+		// Remove existing symlinks if they exists. Creating all new symlinks
+		// means targets are always up to date after running `cash link`.
 		if _, err := os.Lstat(symlinkPath); err == nil {
 			if err := os.Remove(symlinkPath); err != nil {
+				return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
+			}
+		}
+		if _, err := os.Lstat(ogbinPath); err == nil {
+			if err := os.Remove(ogbinPath); err != nil {
 				return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
 			}
 		}
@@ -182,7 +188,6 @@ func (m *Cash) LinkCommands() error {
 		// to avoid recursive cash invocations
 		if cmdPath, err := exec.LookPath(cmd); err == nil {
 			// create a link to the original command in the ogbin directory
-			ogbinPath := filepath.Join(ogbinDir, cmd)
 			if err := os.Symlink(cmdPath, ogbinPath); err != nil {
 				return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
 			}
