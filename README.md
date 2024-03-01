@@ -7,8 +7,8 @@ virtualenv-like workflow: you create your env, tell it which commands to cache, 
 run your commands.
 
 ## Features
-* Workflow similar to virtualenv
-* Command whitelisting by program name, arguments, and patterns
+* Caching for stdout, stderr and exit code
+* Configurable command whitelist by program name, arguments, and patterns
 * Streaming input
 * File change-detection (for args that are file paths)
 * Portable (build your cache on one machine and use it on another)
