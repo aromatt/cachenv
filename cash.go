@@ -44,15 +44,15 @@ func (c *Store) KeyFrom(command string, args []string) CacheKey {
 }
 
 func (s *Store) stdoutPath(key CacheKey) string {
-	return filepath.Join(s.KeyDir(key), "stdout")
+	return filepath.Join(s.KeyDir(key), "out")
 }
 
 func (s *Store) stderrPath(key CacheKey) string {
-	return filepath.Join(s.KeyDir(key), "stderr")
+	return filepath.Join(s.KeyDir(key), "err")
 }
 
 func (s *Store) exitcodePath(key CacheKey) string {
-	return filepath.Join(s.KeyDir(key), "exitcode")
+	return filepath.Join(s.KeyDir(key), "status")
 }
 
 func (s *Store) WriteToCache(key CacheKey, stdout, stderr []byte, exitCode int) error {
