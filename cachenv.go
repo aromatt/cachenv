@@ -450,6 +450,10 @@ func handleAdd(args []string) {
 	}
 
 	fmt.Printf("Command '%s' added to memoized commands.\n", command)
+
+	if err := cachenv.LinkCommands(); err != nil {
+		fmt.Printf("Error creating symlinks: %v\n", err)
+	}
 }
 
 // HandleMemoizedCommand handles the execution of a memoized command
