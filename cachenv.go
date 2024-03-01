@@ -14,6 +14,8 @@ import (
 
 /* Config */
 
+const CONFIG_NAME = "config.yml"
+
 type CommandConfig struct{}
 
 type CacheConfig struct {
@@ -91,17 +93,17 @@ func (s *Store) ReadFromCache(key CacheKey) (stdout, stderr []byte, exitCode int
 	return
 }
 
-/* Cash */
+/* Cachenv */
 
-type Cash struct {
+type Cachenv struct {
 	ConfigPath string
 	Dir        string
 	Config     Config
 	Store      *Store
 }
 
-func NewCash(configPath, dir string) *Cash {
-	return &Cash{
+func NewCachenv(configPath, dir string) *Cachenv {
+	return &Cachenv{
 		ConfigPath: configPath,
 		Dir:        dir,
 		Store: &Store{
@@ -110,7 +112,7 @@ func NewCash(configPath, dir string) *Cash {
 	}
 }
 
-func (m *Cash) LoadConfig() error {
+func (m *Cachenv) LoadConfig() error {
 	configFile, err := os.Open(m.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to open config file: %w", err)
@@ -125,12 +127,12 @@ func (m *Cash) LoadConfig() error {
 	return nil
 }
 
-func (m *Cash) IsCommandMemoized(command string) bool {
+func (m *Cachenv) IsCommandMemoized(command string) bool {
 	_, ok := m.Config.Commands[command]
 	return ok
 }
 
-func (m *Cash) Init() error {
+func (m *Cachenv) Init() error {
 	if err := m.InitializeEnv(); err != nil {
 		return err
 	}
@@ -142,16 +144,16 @@ func (m *Cash) Init() error {
 	return m.CreateActivateScript()
 }
 
-func (m *Cash) BinDir() string {
+func (m *Cachenv) BinDir() string {
 	return filepath.Join(m.Dir, "bin")
 }
 
-func (m *Cash) OgBinDir() string {
+func (m *Cachenv) OgBinDir() string {
 	return filepath.Join(m.Dir, "ogbin")
 }
 
 // LinkCommands synchronizes actual symlinks with config
-func (m *Cash) LinkCommands() error {
+func (m *Cachenv) LinkCommands() error {
 	// Ensure DIR/bin and DIR/ogbin exist
 	binDir := m.BinDir()
 	ogbinDir := m.OgBinDir()
@@ -161,10 +163,10 @@ func (m *Cash) LinkCommands() error {
 		}
 	}
 
-	// Path to the cash binary
-	cashPath, err := os.Executable()
+	// Path to the cachenv binary
+	cachenvPath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("failed to get cash executable path: %w", err)
+		return fmt.Errorf("failed to get cachenv executable path: %w", err)
 	}
 
 	// Iterate over commands from the config file
@@ -172,7 +174,7 @@ func (m *Cash) LinkCommands() error {
 		symlinkPath := filepath.Join(binDir, cmd)
 		ogbinPath := filepath.Join(ogbinDir, cmd)
 		// Remove existing symlinks if they exists. Creating all new symlinks
-		// means targets are always up to date after running `cash link`.
+		// means targets are always up to date after running `cachenv link`.
 		if _, err := os.Lstat(symlinkPath); err == nil {
 			if err := os.Remove(symlinkPath); err != nil {
 				return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
@@ -185,7 +187,7 @@ func (m *Cash) LinkCommands() error {
 		}
 
 		// Create symlink ogbin/<cmd> -> original absolute path to <cmd>
-		// to avoid recursive cash invocations
+		// to avoid recursive cachenv invocations
 		if cmdPath, err := exec.LookPath(cmd); err == nil {
 			// create a link to the original command in the ogbin directory
 			if err := os.Symlink(cmdPath, ogbinPath); err != nil {
@@ -193,8 +195,8 @@ func (m *Cash) LinkCommands() error {
 			}
 		}
 
-		// Create symlink bin/<cmd> -> cash
-		if err := os.Symlink(cashPath, symlinkPath); err != nil {
+		// Create symlink bin/<cmd> -> cachenv
+		if err := os.Symlink(cachenvPath, symlinkPath); err != nil {
 			return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
 		}
 
@@ -222,52 +224,52 @@ func (m *Cash) LinkCommands() error {
 	return nil
 }
 
-func (m *Cash) CreateActivateScript() error {
+func (m *Cachenv) CreateActivateScript() error {
 	// Define the path to the activate script within the bin directory
 	activateScriptPath := filepath.Join(m.BinDir(), "activate")
 
 	// Define the content of the activate script
-	activateScriptContent := `#!/bin/bash
-# DIR/bin/activate - script to activate cash
+	activateScriptContent := fmt.Sprintf(`#!/bin/bash
+# DIR/bin/activate - script to activate cachenv
 
 # Resolve the directory of this script
-CASH_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CACHENV_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Save the current directory to revert back on deactivation
-export CASH_OLDPWD="$PWD"
+export CACHENV_OLDPWD="$PWD"
 
 # Check if already activated
-if [ -z "$CASH_DIR" ]; then
+if [ -z "$CACHENV_DIR" ]; then
 
-    # Function to deactivate cash and restore original environment
-    deactivate_cash() {
-        if [ -z "$CASH_DIR" ]; then
-            echo "cash is not activated."
+    # Function to deactivate cachenv and restore original environment
+    deactivate_cachenv() {
+        if [ -z "$CACHENV_DIR" ]; then
+            echo "cachenv is not activated."
             return
         fi
 
         # Restore the original PATH
-        export PATH="$CASH_OLD_PATH"
-        unset CASH_OLD_PATH
-        unset CASH_DIR
-        unset CASH_CONFIG
+        export PATH="$CACHENV_OLD_PATH"
+        unset CACHENV_OLD_PATH
+        unset CACHENV_DIR
+        unset CACHENV_CONFIG
 
         # Remove the deactivate function
-        unset -f deactivate_cash
+        unset -f deactivate_cachenv
 
-        echo "cash deactivated."
+        echo "cachenv deactivated."
     }
 
-    export CASH_DIR="$(cd "$CASH_BIN/.." && pwd)"
-	export CASH_OLD_PATH="$PATH"
-	export CASH_CONFIG="$CASH_DIR/cash.yml"
-	export PATH="$CASH_DIR/bin:$PATH"
+    export CACHENV_DIR="$(cd "$CACHENV_BIN/.." && pwd)"
+	export CACHENV_OLD_PATH="$PATH"
+	export CACHENV_CONFIG="$CACHENV_DIR/%s"
+	export PATH="$CACHENV_DIR/bin:$PATH"
 
-	echo "cash activated. Use 'deactivate_cash' to deactivate."
+	echo "cachenv activated. Use 'deactivate_cachenv' to deactivate."
 else
-	echo "cash is already activated."
+	echo "cachenv is already activated."
 fi
-`
+`, CONFIG_NAME)
 
 	// Ensure the bin directory exists
 	if err := os.MkdirAll(m.BinDir(), 0755); err != nil {
@@ -284,7 +286,7 @@ fi
 }
 
 // InitializeEnv creates the cache directory and initializes the config file
-func (c *Cash) InitializeEnv() error {
+func (c *Cachenv) InitializeEnv() error {
 	// Create the directory if it does not exist
 	if _, err := os.Stat(c.Dir); os.IsNotExist(err) {
 		if err := os.MkdirAll(c.Dir, 0755); err != nil {
@@ -325,7 +327,7 @@ func (s *Store) Exists(key CacheKey) bool {
 	return !os.IsNotExist(err)
 }
 
-func (m *Cash) HandleMemoizedCommand(cmd string, args []string) {
+func (m *Cachenv) HandleMemoizedCommand(cmd string, args []string) {
 	key := m.Store.KeyFrom(cmd, args)
 
 	if m.Store.Exists(key) {
@@ -372,24 +374,24 @@ func (m *Cash) HandleMemoizedCommand(cmd string, args []string) {
 }
 
 func main() {
-	// This program is used both for controlling cash (e.g. `cash init`) and
+	// This program is used both for controlling cachenv (e.g. `cachenv init`) and
 	// for intercepting memoized commands. Use $0 to determine which is
 	// happening.
 	invokedCmd := filepath.Base(os.Args[0])
 	switch invokedCmd {
-	case "cash":
+	case "cachenv":
 		if len(os.Args) < 2 {
-			fmt.Println("Usage: cash <command> [arguments]")
+			fmt.Println("Usage: cachenv <command> [arguments]")
 			return
 		}
-		handleCashSubcommand(os.Args[1], os.Args[2:])
+		handleCachenvSubcommand(os.Args[1], os.Args[2:])
 	default:
 		handleMemoizedCommand(invokedCmd, os.Args[1:])
 		return
 	}
 }
 
-func handleCashSubcommand(subcommand string, args []string) {
+func handleCachenvSubcommand(subcommand string, args []string) {
 	switch subcommand {
 	case "init":
 		handleInit(args)
@@ -404,83 +406,83 @@ func handleCashSubcommand(subcommand string, args []string) {
 
 func handleInit(args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: cash init <DIR>")
+		fmt.Println("Usage: cachenv init <DIR>")
 		return
 	}
 	dir := args[0]
 
-	cash := NewCash(filepath.Join(dir, "cash.yml"), dir)
-	if err := cash.Init(); err != nil {
-		fmt.Printf("Error initializing cash: %v\n", err)
+	cachenv := loadCachenvFromDir(dir)
+	if err := cachenv.Init(); err != nil {
+		fmt.Printf("Error initializing cachenv: %v\n", err)
 	}
 }
 
-func getActiveCashDir() (string, error) {
-	dir, ok := os.LookupEnv("CASH_DIR")
+func getActiveCachenvDir() (string, error) {
+	dir, ok := os.LookupEnv("CACHENV_DIR")
 	if !ok {
-		return "", fmt.Errorf("cash directory not set; please activate first.")
+		return "", fmt.Errorf("cachenv directory not set; please activate first.")
 	}
 	return dir, nil
 }
 
-func loadCashFromDir(dir string) (*Cash, error) {
-	return NewCash(filepath.Join(dir, "cash.yml"), dir), nil
+func loadCachenvFromDir(dir string) *Cachenv {
+	return NewCachenv(filepath.Join(dir, CONFIG_NAME), dir)
 }
 
 // Supports both:
-// - `cash link DIR`
-// - `cash link` while activated
+// - `cachenv link DIR`
+// - `cachenv link` while activated
 func handleLink(args []string) {
 	var err error
 	var dir string
 
-	// Get the desired cash dir from the first arg or CASH_DIR
+	// Get the desired cachenv dir from the first arg or CACHENV_DIR
 	if len(args) == 1 {
 		dir = args[0]
 	} else {
-		if dir, err = getActiveCashDir(); err != nil {
+		if dir, err = getActiveCachenvDir(); err != nil {
 			fmt.Printf("Error loading config: %v\n", err)
 			return
 		}
 	}
 
-	cash, err := loadCashFromDir(dir)
-	if err := cash.LoadConfig(); err != nil {
+	cachenv, err := loadCachenvFromDir(dir)
+	if err := cachenv.LoadConfig(); err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		return
 	}
 
-	if err := cash.LinkCommands(); err != nil {
+	if err := cachenv.LinkCommands(); err != nil {
 		fmt.Printf("Error creating symlinks: %v\n", err)
 	}
 }
 
 func handleAdd(args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: cash add <command>")
+		fmt.Println("Usage: cachenv add <command>")
 		return
 	}
 
-	dir, err := getActiveCashDir()
+	dir, err := getActiveCachenvDir()
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		return
 	}
 
-	cash, err := loadCashFromDir(dir)
-	if err := cash.LoadConfig(); err != nil {
+	cachenv, err := loadCachenvFromDir(dir)
+	if err := cachenv.LoadConfig(); err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		return
 	}
 
 	command := args[0]
-	if cash.IsCommandMemoized(command) {
+	if cachenv.IsCommandMemoized(command) {
 		fmt.Printf("Command '%s' is already memoized.\n", command)
 		return
 	}
 
-	cash.Config.Commands[command] = CommandConfig{}
-	configFile, err := os.Create(cash.ConfigPath)
+	cachenv.Config.Commands[command] = CommandConfig{}
+	configFile, err := os.Create(cachenv.ConfigPath)
 	if err != nil {
 		fmt.Printf("Error opening config file: %v\n", err)
 		return
@@ -488,7 +490,7 @@ func handleAdd(args []string) {
 	defer configFile.Close()
 
 	encoder := yaml.NewEncoder(configFile)
-	if err := encoder.Encode(cash.Config); err != nil {
+	if err := encoder.Encode(cachenv.Config); err != nil {
 		fmt.Printf("Error encoding config: %v\n", err)
 		return
 	}
@@ -498,16 +500,16 @@ func handleAdd(args []string) {
 
 // HandleMemoizedCommand handles the execution of a memoized command
 func handleMemoizedCommand(cmd string, args []string) {
-	dir := os.Getenv("CASH_DIR")
+	dir := os.Getenv("CACHENV_DIR")
 	if dir == "" {
-		fmt.Println("Error: cash directory not set. Cannot execute memoized command.")
+		fmt.Println("Error: cachenv directory not set. Cannot execute memoized command.")
 		return
 	}
 
-	cash := NewCash(filepath.Join(dir, "cash.yml"), dir)
-	if err := cash.LoadConfig(); err != nil {
+	cachenv := loadCachenvFromDir(dir)
+	if err := cachenv.LoadConfig(); err != nil {
 		fmt.Printf("Error loading config for memoized command '%s': %v\n", cmd, err)
 		return
 	}
-	cash.HandleMemoizedCommand(cmd, args)
+	cachenv.HandleMemoizedCommand(cmd, args)
 }

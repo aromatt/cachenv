@@ -1,4 +1,4 @@
-module github.com/aromatt/cash
+module github.com/aromatt/cachenv
 
 go 1.21.5
 

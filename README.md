@@ -1,8 +1,8 @@
-# cash
+# cachenv
 A versatile memoizing cache for program invocations, with a virtualenv-like workflow.
 
 ## Overview
-`cash` is a tool that optimizes the execution of programs by caching their
+`cachenv` is a tool that optimizes the execution of programs by caching their
 outputs, including stdout, stderr, and exit codes. It uses arguments and (optionally)
 stdin as cache keys.
 
@@ -23,6 +23,6 @@ iteration.
 
 ## Use Cases
 * **Optimizing Development Workflows**: Accelerates development and testing cycles for software that relies on external programs or data processing commands.
-* **Improving Script Performance**: Boost the performance of scripts by caching the results of expensive program executions, making repeated invocations significantly faster.
+* **Improving Script Performance**: Boost the performance of scripts (or compiled programs) by caching the results of expensive program executions, making repeated invocations significantly faster.
 * **Efficient Resource Utilization**: Reduces calls to metered APIs and conserves bandwidth by caching program interactions that would otherwise redundantly fetch the same data.
-* **Reliable Testing Environments**: Ensures consistent and quick retrieval of program outputs for testing frameworks and automated scripts, minimizaing external dependencies.
+* **Reliable Testing Environments**: Ensures consistent and quick retrieval of program outputs for testing frameworks and automation, minimizaing external dependencies.
