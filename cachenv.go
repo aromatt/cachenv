@@ -145,6 +145,11 @@ func (m *Cachenv) CreateActivateScript() error {
 	// Define the path to the activate script within the bin directory
 	activateScriptPath := filepath.Join(m.Dir, "activate")
 
+	cachenvExecPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get cachenv executable path: %w", err)
+	}
+
 	// Define the content of the activate script
 	activateScriptContent := fmt.Sprintf(`
 # This script must be invoked from your shell via 'source <cachenv>/activate'.
@@ -171,12 +176,14 @@ deactivate_cachenv() {
     # Restore the original PATH
     export PATH="$_CACHENV_OLD_PATH"
     unset _CACHENV_OLD_PATH
+    unset _CACHENV_EXECUTABLE
     unset CACHENV
 
-    # Remove the deactivate function
+    # Remove shell functions
     unset -f deactivate_cachenv
+    unset -f cachenv
 
-	# Makes hash forget past commands
+    # Needed for some commands after changing PATH
     hash -r 2>/dev/null
 
     # Restore old prompt
@@ -187,11 +194,32 @@ deactivate_cachenv() {
     fi
 }
 
+# Intercept cachenv itself so that we can run 'hash -r' after adding new symlinks
+cachenv() {
+    # Another way to run deactivate
+    if [ "$1" = "deactivate" ]; then
+        deactivate_cachenv
+        return
+    fi
+
+    "$_CACHENV_EXECUTABLE" "$@"
+    local cachenv_exit_code=$?
+
+    if [ "$1" = "add" ] || [ "$1" = "link" ]; then
+        # Needed for some commands after changing PATH
+		hash -r 2>/dev/null
+    fi
+
+	return $cachenv_exit_code
+}
+
 export CACHENV="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export _CACHENV_OLD_PATH="$PATH"
+export _CACHENV_EXECUTABLE="%s"
+
 export PATH="$CACHENV/bin:$PATH"
 
-# Makes hash forget past commands
+# Needed for some commands after changing PATH
 hash -r 2>/dev/null
 
 # Add a prefix to the shell prompt
@@ -202,7 +230,7 @@ else
     PS1="($(basename "$CACHENV")) ${PS1-}"
 fi
 export PS1
-`)
+`, cachenvExecPath)
 
 	// Ensure the bin directory exists
 	if err := os.MkdirAll(m.BinDir(), 0755); err != nil {
