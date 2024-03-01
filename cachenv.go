@@ -308,11 +308,6 @@ func (m *Cachenv) HandleMemoizedCommand(cmd string, args []string) int {
 		cmd.Stderr = &stderrBuf
 
 		err = cmd.Run()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error executing command: %v\n", err)
-			return -1
-		}
-
 		exitCode := 0
 		if err != nil {
 			if exitError, ok := err.(*exec.ExitError); ok {
