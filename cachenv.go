@@ -148,16 +148,16 @@ func (m *Cachenv) BinDir() string {
 	return filepath.Join(m.Dir, "bin")
 }
 
-func (m *Cachenv) OgBinDir() string {
-	return filepath.Join(m.Dir, "ogbin")
+func (m *Cachenv) OldBinDir() string {
+	return filepath.Join(m.Dir, "bin.old")
 }
 
 // LinkCommands synchronizes actual symlinks with config
 func (m *Cachenv) LinkCommands() error {
-	// Ensure DIR/bin and DIR/ogbin exist
+	// Ensure DIR/bin and DIR/bin.old exist
 	binDir := m.BinDir()
-	ogbinDir := m.OgBinDir()
-	for _, dir := range []string{binDir, ogbinDir} {
+	oldbinDir := m.OldBinDir()
+	for _, dir := range []string{binDir, oldbinDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create %s, directory: %w", dir, err)
 		}
@@ -172,7 +172,7 @@ func (m *Cachenv) LinkCommands() error {
 	// Iterate over commands from the config file
 	for cmd := range m.Config.Commands {
 		symlinkPath := filepath.Join(binDir, cmd)
-		ogbinPath := filepath.Join(ogbinDir, cmd)
+		oldbinPath := filepath.Join(oldbinDir, cmd)
 		// Remove existing symlinks if they exists. Creating all new symlinks
 		// means targets are always up to date after running `cachenv link`.
 		if _, err := os.Lstat(symlinkPath); err == nil {
@@ -180,17 +180,17 @@ func (m *Cachenv) LinkCommands() error {
 				return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
 			}
 		}
-		if _, err := os.Lstat(ogbinPath); err == nil {
-			if err := os.Remove(ogbinPath); err != nil {
+		if _, err := os.Lstat(oldbinPath); err == nil {
+			if err := os.Remove(oldbinPath); err != nil {
 				return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
 			}
 		}
 
-		// Create symlink ogbin/<cmd> -> original absolute path to <cmd>
+		// Create symlink oldbin/<cmd> -> original absolute path to <cmd>
 		// to avoid recursive cachenv invocations
 		if cmdPath, err := exec.LookPath(cmd); err == nil {
-			// create a link to the original command in the ogbin directory
-			if err := os.Symlink(cmdPath, ogbinPath); err != nil {
+			// create a link to the original command in the oldbin directory
+			if err := os.Symlink(cmdPath, oldbinPath); err != nil {
 				return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
 			}
 		}
@@ -226,24 +226,24 @@ func (m *Cachenv) LinkCommands() error {
 
 func (m *Cachenv) CreateActivateScript() error {
 	// Define the path to the activate script within the bin directory
-	activateScriptPath := filepath.Join(m.BinDir(), "activate")
+	activateScriptPath := filepath.Join(m.Dir, "activate")
 
 	// Define the content of the activate script
 	activateScriptContent := fmt.Sprintf(`#!/bin/bash
-# DIR/bin/activate - script to activate cachenv
+# DIR/activate - script to activate cachenv
 
 # Resolve the directory of this script
-CACHENV_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CACHENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Save the current directory to revert back on deactivation
 export CACHENV_OLDPWD="$PWD"
 
 # Check if already activated
-if [ -z "$CACHENV_DIR" ]; then
+if [ -z "$CACHENV_ACTIVE" ]; then
 
     # Function to deactivate cachenv and restore original environment
     deactivate_cachenv() {
-        if [ -z "$CACHENV_DIR" ]; then
+        if [ -z "$CACHENV_ACTIVE" ]; then
             echo "cachenv is not activated."
             return
         fi
@@ -253,6 +253,7 @@ if [ -z "$CACHENV_DIR" ]; then
         unset CACHENV_OLD_PATH
         unset CACHENV_DIR
         unset CACHENV_CONFIG
+		unset CACHENV_ACTIVE
 
         # Remove the deactivate function
         unset -f deactivate_cachenv
@@ -260,10 +261,11 @@ if [ -z "$CACHENV_DIR" ]; then
         echo "cachenv deactivated."
     }
 
-    export CACHENV_DIR="$(cd "$CACHENV_BIN/.." && pwd)"
+    export CACHENV_DIR
 	export CACHENV_OLD_PATH="$PATH"
 	export CACHENV_CONFIG="$CACHENV_DIR/%s"
 	export PATH="$CACHENV_DIR/bin:$PATH"
+    export CACHENV_ACTIVE=1
 
 	echo "cachenv activated. Use 'deactivate_cachenv' to deactivate."
 else
@@ -342,8 +344,8 @@ func (m *Cachenv) HandleMemoizedCommand(cmd string, args []string) {
 		fmt.Println("Exit Code:", exitCode)
 	} else {
 		fmt.Println("Prepping command", cmd, args)
-		ogCmdPath := filepath.Join(m.OgBinDir(), cmd)
-		cmdExec := exec.Command(ogCmdPath, args...)
+		oldCmdPath := filepath.Join(m.OldBinDir(), cmd)
+		cmdExec := exec.Command(oldCmdPath, args...)
 		var stdoutBuf, stderrBuf bytes.Buffer
 		cmdExec.Stdout = &stdoutBuf
 		cmdExec.Stderr = &stderrBuf
@@ -446,7 +448,7 @@ func handleLink(args []string) {
 		}
 	}
 
-	cachenv, err := loadCachenvFromDir(dir)
+	cachenv := loadCachenvFromDir(dir)
 	if err := cachenv.LoadConfig(); err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		return
@@ -469,7 +471,7 @@ func handleAdd(args []string) {
 		return
 	}
 
-	cachenv, err := loadCachenvFromDir(dir)
+	cachenv := loadCachenvFromDir(dir)
 	if err := cachenv.LoadConfig(); err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		return
