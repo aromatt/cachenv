@@ -395,6 +395,8 @@ func handleCashSubcommand(subcommand string, args []string) {
 		handleInit(args)
 	case "link":
 		handleLink(args)
+	case "add":
+		handleAdd(args)
 	default:
 		fmt.Println("Invalid command. Available commands are: init, link")
 	}
@@ -451,6 +453,47 @@ func handleLink(args []string) {
 	if err := cash.LinkCommands(); err != nil {
 		fmt.Printf("Error creating symlinks: %v\n", err)
 	}
+}
+
+func handleAdd(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: cash add <command>")
+		return
+	}
+
+	dir, err := getActiveCashDir()
+	if err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		return
+	}
+
+	cash, err := loadCashFromDir(dir)
+	if err := cash.LoadConfig(); err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		return
+	}
+
+	command := args[0]
+	if cash.IsCommandMemoized(command) {
+		fmt.Printf("Command '%s' is already memoized.\n", command)
+		return
+	}
+
+	cash.Config.Commands[command] = CommandConfig{}
+	configFile, err := os.Create(cash.ConfigPath)
+	if err != nil {
+		fmt.Printf("Error opening config file: %v\n", err)
+		return
+	}
+	defer configFile.Close()
+
+	encoder := yaml.NewEncoder(configFile)
+	if err := encoder.Encode(cash.Config); err != nil {
+		fmt.Printf("Error encoding config: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Command '%s' added to memoized commands.\n", command)
 }
 
 // HandleMemoizedCommand handles the execution of a memoized command
