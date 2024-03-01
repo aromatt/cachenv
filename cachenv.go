@@ -15,6 +15,8 @@ import (
 type Cachenv struct {
 	ConfigPath string
 	Dir        string
+	BinDir     string
+	OldBinDir  string
 	Config     Config
 	Store      *Store
 }
@@ -23,6 +25,8 @@ func NewCachenv(configPath, dir string) *Cachenv {
 	return &Cachenv{
 		ConfigPath: configPath,
 		Dir:        dir,
+		BinDir:     filepath.Join(dir, "bin"),
+		OldBinDir:  filepath.Join(dir, "bin.old"),
 		Store: &Store{
 			Dir: filepath.Join(dir, "data"),
 		},
@@ -61,24 +65,9 @@ func (m *Cachenv) Init() error {
 	return m.CreateActivateScript()
 }
 
-func (m *Cachenv) BinDir() string {
-	return filepath.Join(m.Dir, "bin")
-}
-
-func (m *Cachenv) OldBinDir() string {
-	return filepath.Join(m.Dir, "bin.old")
-}
-
-// LinkCommands synchronizes actual symlinks with config
-func (m *Cachenv) LinkCommands() error {
-	// Ensure DIR/bin and DIR/bin.old exist
-	binDir := m.BinDir()
-	oldbinDir := m.OldBinDir()
-	for _, dir := range []string{binDir, oldbinDir} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create %s, directory: %w", dir, err)
-		}
-	}
+func (m *Cachenv) LinkCommand(cmd string) error {
+	symlinkPath := filepath.Join(m.BinDir, cmd)
+	oldbinPath := filepath.Join(m.OldBinDir, cmd)
 
 	// Path to the cachenv binary
 	cachenvPath, err := os.Executable()
@@ -86,42 +75,53 @@ func (m *Cachenv) LinkCommands() error {
 		return fmt.Errorf("failed to get cachenv executable path: %w", err)
 	}
 
-	// Iterate over commands from the config file
-	for cmd := range m.Config.Commands {
-		symlinkPath := filepath.Join(binDir, cmd)
-		oldbinPath := filepath.Join(oldbinDir, cmd)
-		// Remove existing symlinks if they exists. Creating all new symlinks
-		// means targets are always up to date after running `cachenv link`.
-		if _, err := os.Lstat(symlinkPath); err == nil {
-			if err := os.Remove(symlinkPath); err != nil {
-				return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
-			}
+	// Remove existing symlink if it exists. Creating all new symlinks
+	// means targets are always up to date after running `cachenv link`.
+	if _, err := os.Lstat(symlinkPath); err == nil {
+		if err := os.Remove(symlinkPath); err != nil {
+			return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
 		}
-		if _, err := os.Lstat(oldbinPath); err == nil {
-			if err := os.Remove(oldbinPath); err != nil {
-				return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
-			}
+	}
+	if _, err := os.Lstat(oldbinPath); err == nil {
+		if err := os.Remove(oldbinPath); err != nil {
+			return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
 		}
+	}
 
-		// Create symlink oldbin/<cmd> -> original absolute path to <cmd>
-		// to avoid recursive cachenv invocations
-		if cmdPath, err := exec.LookPath(cmd); err == nil {
-			// create a link to the original command in the oldbin directory
-			if err := os.Symlink(cmdPath, oldbinPath); err != nil {
-				return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
-			}
-		}
-
-		// Create symlink bin/<cmd> -> cachenv
-		if err := os.Symlink(cachenvPath, symlinkPath); err != nil {
+	// Create symlink oldbin/<cmd> -> original absolute path to <cmd>
+	// to avoid recursive cachenv invocations
+	if cmdPath, err := exec.LookPath(cmd); err == nil {
+		// create a link to the original command in the oldbin directory
+		if err := os.Symlink(cmdPath, oldbinPath); err != nil {
 			return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
 		}
+	}
 
-		fmt.Printf("Created symlink for %s\n", cmd)
+	// Create symlink bin/<cmd> -> cachenv
+	if err := os.Symlink(cachenvPath, symlinkPath); err != nil {
+		return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
+	}
+
+	fmt.Printf("Created symlink for %s\n", cmd)
+	return nil
+}
+
+// LinkCommands synchronizes actual symlinks with config
+func (m *Cachenv) LinkCommands() error {
+	// Ensure DIR/bin and DIR/bin.old exist
+	for _, dir := range []string{m.BinDir, m.OldBinDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create %s, directory: %w", dir, err)
+		}
+	}
+
+	// Iterate over commands from the config file
+	for cmd := range m.Config.Commands {
+		m.LinkCommand(cmd)
 	}
 
 	// Iterate over symlinks to delete any that are not in the config
-	entries, err := os.ReadDir(binDir)
+	entries, err := os.ReadDir(m.BinDir)
 	if err != nil {
 		return fmt.Errorf("failed to read bin directory: %w", err)
 	}
@@ -130,7 +130,7 @@ func (m *Cachenv) LinkCommands() error {
 			continue
 		}
 		if _, ok := m.Config.Commands[entry.Name()]; !ok {
-			symlinkPath := filepath.Join(binDir, entry.Name())
+			symlinkPath := filepath.Join(m.BinDir, entry.Name())
 			if err := os.Remove(symlinkPath); err != nil {
 				return fmt.Errorf("failed to remove symlink for %s: %w", entry.Name(), err)
 			}
@@ -233,7 +233,7 @@ export PS1
 `, cachenvExecPath)
 
 	// Ensure the bin directory exists
-	if err := os.MkdirAll(m.BinDir(), 0755); err != nil {
+	if err := os.MkdirAll(m.BinDir, 0755); err != nil {
 		return fmt.Errorf("failed to create bin directory: %w", err)
 	}
 
@@ -301,7 +301,7 @@ func (m *Cachenv) HandleMemoizedCommand(cmd string, args []string) int {
 			return -1
 		}
 	} else {
-		realCmdPath := filepath.Join(m.OldBinDir(), cmd)
+		realCmdPath := filepath.Join(m.OldBinDir, cmd)
 		cmd := exec.Command(realCmdPath, args...)
 		var stdoutBuf, stderrBuf bytes.Buffer
 		cmd.Stdout = &stdoutBuf
