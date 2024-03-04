@@ -18,7 +18,7 @@ type CacheKey struct {
 	Hash string
 }
 
-func (c *Store) KeyFrom(command string, args []string) CacheKey {
+func KeyFrom(command string, args []string) CacheKey {
 	concatCmd := command + " " + strings.Join(args, " ")
 	h := sha256.Sum256([]byte(concatCmd))
 	return CacheKey{
@@ -36,6 +36,15 @@ func (s *Store) stderrPath(key CacheKey) string {
 
 func (s *Store) exitcodePath(key CacheKey) string {
 	return filepath.Join(s.KeyDir(key), "status")
+}
+
+func (s *Store) KeyDir(key CacheKey) string {
+	return filepath.Join(s.Dir, key.Hash)
+}
+
+func (s *Store) Exists(key CacheKey) bool {
+	_, err := os.Stat(s.KeyDir(key))
+	return !os.IsNotExist(err)
 }
 
 func (s *Store) WriteToCache(key CacheKey, stdout, stderr []byte, exitCode int) error {

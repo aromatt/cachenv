@@ -279,17 +279,8 @@ func (c *Cachenv) InitializeEnv() error {
 	return nil
 }
 
-func (s *Store) KeyDir(key CacheKey) string {
-	return filepath.Join(s.Dir, key.Hash)
-}
-
-func (s *Store) Exists(key CacheKey) bool {
-	_, err := os.Stat(s.KeyDir(key))
-	return !os.IsNotExist(err)
-}
-
 func (m *Cachenv) HandleMemoizedCommand(cmd string, args []string) int {
-	key := m.Store.KeyFrom(cmd, args)
+	key := KeyFrom(cmd, args)
 	var stdout, stderr []byte
 	var exitCode int
 	var err error
@@ -298,7 +289,7 @@ func (m *Cachenv) HandleMemoizedCommand(cmd string, args []string) int {
 		stdout, stderr, exitCode, err = m.Store.ReadFromCache(key)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to read from cache: %v\n", err)
-			return -1
+			return 1
 		}
 	} else {
 		realCmdPath := filepath.Join(m.OldBinDir, cmd)
@@ -314,7 +305,7 @@ func (m *Cachenv) HandleMemoizedCommand(cmd string, args []string) int {
 				exitCode = exitError.ExitCode()
 			} else {
 				fmt.Fprintf(os.Stderr, "Error executing command: %v\n", err)
-				return -1
+				return 1
 			}
 		} else {
 			exitCode = cmd.ProcessState.ExitCode()
@@ -325,7 +316,7 @@ func (m *Cachenv) HandleMemoizedCommand(cmd string, args []string) int {
 		err = m.Store.WriteToCache(key, stdout, stderr, exitCode)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to write to cache: %v\n", err)
-			return -1
+			return 1
 		}
 	}
 
@@ -339,43 +330,171 @@ func main() {
 	// for intercepting memoized commands. Use $0 to determine which is
 	// happening.
 	invokedCmd := filepath.Base(os.Args[0])
+	exitCode := 0
 	switch invokedCmd {
 	case "cachenv":
 		if len(os.Args) < 2 {
 			fmt.Println("Usage: cachenv <command> [arguments]")
 			return
 		}
-		handleCachenvSubcommand(os.Args[1], os.Args[2:])
+		exitCode = handleCachenvSubcommand(os.Args[1], os.Args[2:])
 	default:
-		exitCode := handleMemoizedCommand(invokedCmd, os.Args[1:])
-		os.Exit(exitCode)
+		exitCode = handleMemoizedCommand(invokedCmd, os.Args[1:])
 	}
+	os.Exit(exitCode)
 }
 
-func handleCachenvSubcommand(subcommand string, args []string) {
+func handleCachenvSubcommand(subcommand string, args []string) int {
 	switch subcommand {
 	case "init":
-		handleInit(args)
+		return handleInit(args)
 	case "link":
-		handleLink(args)
+		return handleLink(args)
 	case "add":
-		handleAdd(args)
+		return handleAdd(args)
+	case "key":
+		return handleKey(args)
+	case "touch":
+		return handleTouch(args)
 	default:
-		fmt.Println("Invalid command. Available commands are: init, link")
+		fmt.Println("Invalid command. Available commands are: init, link, add")
+		return 1
 	}
 }
 
-func handleInit(args []string) {
+func handleInit(args []string) int {
 	if len(args) < 1 {
 		fmt.Println("Usage: cachenv init <DIR>")
-		return
+		return 1
 	}
 	dir := args[0]
 
 	cachenv := loadCachenvFromDir(dir)
 	if err := cachenv.Init(); err != nil {
 		fmt.Printf("Error initializing cachenv: %v\n", err)
+		return 1
 	}
+
+	return 0
+}
+
+// - `cachenv link` while activated
+func handleLink(args []string) int {
+	var err error
+	var dir string
+
+	if dir, err = getActiveCachenvDir(); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return 1
+	}
+
+	cachenv := loadCachenvFromDir(dir)
+	if err := cachenv.LoadConfig(); err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		return 1
+	}
+
+	if err := cachenv.LinkCommands(); err != nil {
+		fmt.Printf("Error creating symlinks: %v\n", err)
+		return 1
+	}
+
+	return 0
+}
+
+func handleAdd(args []string) int {
+	if len(args) < 1 {
+		fmt.Println("Usage: cachenv add <command>")
+		return 1
+	}
+
+	dir, err := getActiveCachenvDir()
+	if err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		return 1
+	}
+
+	cachenv := loadCachenvFromDir(dir)
+	if err := cachenv.LoadConfig(); err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		return 1
+	}
+
+	command := args[0]
+	if cachenv.IsCommandMemoized(command) {
+		fmt.Printf("Command '%s' is already memoized.\n", command)
+		return 1
+	}
+
+	cachenv.Config.Commands[command] = CommandConfig{}
+	configFile, err := os.Create(cachenv.ConfigPath)
+	if err != nil {
+		fmt.Printf("Error opening config file: %v\n", err)
+		return 1
+	}
+	defer configFile.Close()
+
+	encoder := yaml.NewEncoder(configFile)
+	if err := encoder.Encode(cachenv.Config); err != nil {
+		fmt.Printf("Error encoding config: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Command '%s' added to memoized commands.\n", command)
+
+	if err := cachenv.LinkCommands(); err != nil {
+		fmt.Printf("Error creating symlinks: %v\n", err)
+		return 1
+	}
+
+	return 0
+}
+
+// Returns the hash ID for the provided cached command (+ args)
+func handleKey(args []string) int {
+	if len(args) < 1 {
+		fmt.Println("Usage: cachenv key <command>")
+		return 1
+	}
+	fmt.Println(KeyFrom(args[0], args[1:]).Hash)
+	return 0
+}
+
+// Like touch(1), creates an empty cache entry, or updates the timestamp of an
+// existing on cache entry.
+// TODO: actually do the latter
+func handleTouch(args []string) int {
+	if len(args) < 1 {
+		fmt.Println("Usage: cachenv touch <command>")
+		return 1
+	}
+
+	dir, err := getActiveCachenvDir()
+	if err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		return 1
+	}
+
+	ce := loadCachenvFromDir(dir)
+	if err := ce.LoadConfig(); err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		return 1
+	}
+
+	command := args[0]
+	if !ce.IsCommandMemoized(command) {
+		fmt.Printf("Command '%s' is not memoized.\n", command)
+		return 1
+	}
+
+	key := KeyFrom(command, args[1:])
+	err = ce.Store.WriteToCache(key, []byte{}, []byte{}, 0)
+	fmt.Println(key.Hash)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write to cache: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func getActiveCachenvDir() (string, error) {
@@ -390,84 +509,18 @@ func loadCachenvFromDir(dir string) *Cachenv {
 	return NewCachenv(filepath.Join(dir, CONFIG_NAME), dir)
 }
 
-// - `cachenv link` while activated
-func handleLink(args []string) {
-	var err error
-	var dir string
-
-	if dir, err = getActiveCachenvDir(); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-
-	cachenv := loadCachenvFromDir(dir)
-	if err := cachenv.LoadConfig(); err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		return
-	}
-
-	if err := cachenv.LinkCommands(); err != nil {
-		fmt.Printf("Error creating symlinks: %v\n", err)
-	}
-}
-
-func handleAdd(args []string) {
-	if len(args) < 1 {
-		fmt.Println("Usage: cachenv add <command>")
-		return
-	}
-
-	dir, err := getActiveCachenvDir()
-	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		return
-	}
-
-	cachenv := loadCachenvFromDir(dir)
-	if err := cachenv.LoadConfig(); err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		return
-	}
-
-	command := args[0]
-	if cachenv.IsCommandMemoized(command) {
-		fmt.Printf("Command '%s' is already memoized.\n", command)
-		return
-	}
-
-	cachenv.Config.Commands[command] = CommandConfig{}
-	configFile, err := os.Create(cachenv.ConfigPath)
-	if err != nil {
-		fmt.Printf("Error opening config file: %v\n", err)
-		return
-	}
-	defer configFile.Close()
-
-	encoder := yaml.NewEncoder(configFile)
-	if err := encoder.Encode(cachenv.Config); err != nil {
-		fmt.Printf("Error encoding config: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Command '%s' added to memoized commands.\n", command)
-
-	if err := cachenv.LinkCommands(); err != nil {
-		fmt.Printf("Error creating symlinks: %v\n", err)
-	}
-}
-
 // HandleMemoizedCommand handles the execution of a memoized command
 func handleMemoizedCommand(cmd string, args []string) int {
 	dir := os.Getenv("CACHENV")
 	if dir == "" {
 		fmt.Println("Error: cachenv directory not set. Cannot execute memoized command.")
-		return -1
+		return 1
 	}
 
 	cachenv := loadCachenvFromDir(dir)
 	if err := cachenv.LoadConfig(); err != nil {
 		fmt.Printf("Error loading config for memoized command '%s': %v\n", cmd, err)
-		return -1
+		return 1
 	}
 	return cachenv.HandleMemoizedCommand(cmd, args)
 }
