@@ -16,7 +16,11 @@ const (
 	LINKS_TO_REAL_NAME = "links-to-real"
 )
 
-/* Cachenv */
+type ExecResult struct {
+	Stdout   []byte
+	Stderr   []byte
+	ExitCode int
+}
 
 type Cachenv struct {
 	ConfigPath string
@@ -95,15 +99,29 @@ func (c *Cachenv) CreateLinksDirs() error {
 }
 
 // Creates a symlink to the cachenv executable. We can't just use
-// LinkCommand("cachenv") because while activated, 'cachenv' is a shell
+// CreateLink("cachenv") because while activated, 'cachenv' is a shell
 // function and won't be findable by LinkCommand().
 func (c *Cachenv) CreateCachenvLink() error {
+	// Get the real path to the cachenv executable
 	cachenvExecPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get cachenv executable path: %w", err)
 	}
+
+	// Create new symlink
 	if err := os.Symlink(cachenvExecPath, c.LinkToRealCachenv()); err != nil {
 		return fmt.Errorf("failed to create symlink to real cachenv: %w", err)
+	}
+	return nil
+}
+
+func (c *Cachenv) RemoveCachenvLink() error {
+	if _, err := os.Lstat(c.LinkToRealCachenv()); err == nil {
+		if err := os.Remove(c.LinkToRealCachenv()); err != nil {
+			return fmt.Errorf("failed to remove existing symlink to real cachenv: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to stat symlink to real cachenv: %w", err)
 	}
 	return nil
 }
@@ -132,7 +150,7 @@ func (c *Cachenv) Init() error {
 	return nil
 }
 
-func (c *Cachenv) LinkCommand(cmd string) error {
+func (c *Cachenv) RefreshLinksFor(cmd string) error {
 	linkInPath := c.LinkInPath(cmd)
 	linkToReal := c.LinkToReal(cmd)
 
@@ -166,27 +184,33 @@ func (c *Cachenv) LinkCommand(cmd string) error {
 		return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
 	}
 
-	fmt.Printf("Created symlink for %s\n", cmd)
+	fmt.Printf("Refreshed symlink for %s\n", cmd)
 	return nil
 }
 
-// LinkCommands synchronizes actual symlinks with config
-func (c *Cachenv) LinkCommands() error {
-	// Iterate over commands from the config file
+// Resets all symlinks
+func (c *Cachenv) RefreshLinks() error {
+	var err error
+
+	// Create symlinks for all commands in the config
 	for cmd := range c.Config.Commands {
-		c.LinkCommand(cmd)
+		if err = c.RefreshLinksFor(cmd); err != nil {
+			return err
+		}
 	}
 
-	// Iterate over symlinks to delete any that are not in the config
+	// Delete any symlinks that are not in the config
 	entries, err := os.ReadDir(c.DirLinksInPath())
 	if err != nil {
 		return fmt.Errorf("failed to read bin directory: %w", err)
 	}
 	for _, entry := range entries {
-		if entry.Name() == "activate" {
-			continue
-		}
 		if _, ok := c.Config.Commands[entry.Name()]; !ok {
+			// Skip the cachenv symlink (it would otherwise be removed because
+			// it's not in the config)
+			if entry.Name() == "cachenv" {
+				continue
+			}
 			symlinkPath := filepath.Join(c.DirLinksInPath(), entry.Name())
 			if err := os.Remove(symlinkPath); err != nil {
 				return fmt.Errorf("failed to remove symlink for %s: %w", entry.Name(), err)
@@ -330,12 +354,6 @@ func (c *Cachenv) InitializeEnv() error {
 	return nil
 }
 
-type ExecResult struct {
-	Stdout   []byte
-	Stderr   []byte
-	ExitCode int
-}
-
 func (c *Cachenv) PrepareRealCommand(cmdName string, args ...string) *exec.Cmd {
 	return exec.Command(filepath.Join(c.DirLinksToReal(), cmdName), args...)
 }
@@ -452,15 +470,45 @@ func handleInit(args []string) int {
 	return 0
 }
 
-// - `cachenv link` while activated
+// When invoked while activated, refreshes the symlinks for the active cachenv
+// instance. When not activated, refreshes the symlinks for the provided
+// directory. This also refreshes the symlink to the cachenv executable.
 func handleLink(args []string) int {
-	c, err := loadActiveCachenv()
-	if err != nil {
-		fmt.Printf("Error loading active cachenv: %v\n", err)
+	if len(args) > 1 {
+		fmt.Println("Usage: cachenv link [DIR]")
 		return 1
 	}
 
-	if err := c.LinkCommands(); err != nil {
+	var c *Cachenv
+	var err error
+	if !IsCachenvActivated() {
+		if len(args) != 1 {
+			fmt.Println("Usage: cachenv link DIR")
+			return 1
+		}
+		c = loadCachenvFromDir(args[0])
+		c.LoadConfig()
+
+		// Refresh symlink to cachenv executable. Note: this can't be done while
+		// activated.
+		if err = c.RemoveCachenvLink(); err != nil {
+			fmt.Printf("Error removing symlink to cachenv: %v\n", err)
+			return 1
+		}
+		if err = c.CreateCachenvLink(); err != nil {
+			fmt.Printf("Error creating symlink to cachenv: %v\n", err)
+			return 1
+		}
+		fmt.Println("Refreshed symlink for cachenv")
+	} else {
+		c, err = loadActiveCachenv()
+		if err != nil {
+			fmt.Printf("Error loading active cachenv: %v\n", err)
+			return 1
+		}
+	}
+
+	if err := c.RefreshLinks(); err != nil {
 		fmt.Printf("Error creating symlinks: %v\n", err)
 		return 1
 	}
@@ -502,7 +550,7 @@ func handleAdd(args []string) int {
 
 	fmt.Printf("Command '%s' added to memoized commands.\n", cmdName)
 
-	if err := c.LinkCommand(cmdName); err != nil {
+	if err := c.RefreshLinksFor(cmdName); err != nil {
 		fmt.Printf("Error creating symlinks: %v\n", err)
 		return 1
 	}
@@ -595,6 +643,11 @@ func handleDiff(args []string) int {
 	}
 
 	return 0
+}
+
+func IsCachenvActivated() bool {
+	_, ok := os.LookupEnv("CACHENV")
+	return ok
 }
 
 func getActiveCachenvDir() (string, error) {
