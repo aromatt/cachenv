@@ -2,8 +2,6 @@ package main
 
 /* Config */
 
-const CONFIG_NAME = "config.yml"
-
 type CommandConfig struct{}
 
 type CacheConfig struct {

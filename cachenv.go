@@ -10,13 +10,17 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+const (
+	CONFIG_NAME        = "config.yaml"
+	LINKS_IN_PATH_NAME = "links-in-path"
+	LINKS_TO_REAL_NAME = "links-to-real"
+)
+
 /* Cachenv */
 
 type Cachenv struct {
 	ConfigPath string
 	Dir        string
-	BinDir     string
-	OldBinDir  string
 	Config     Config
 	Store      *Store
 }
@@ -25,80 +29,140 @@ func NewCachenv(configPath, dir string) *Cachenv {
 	return &Cachenv{
 		ConfigPath: configPath,
 		Dir:        dir,
-		BinDir:     filepath.Join(dir, "bin"),
-		OldBinDir:  filepath.Join(dir, "bin.old"),
 		Store: &Store{
 			Dir: filepath.Join(dir, "data"),
 		},
 	}
 }
 
-func (m *Cachenv) LoadConfig() error {
-	configFile, err := os.Open(m.ConfigPath)
+func (c *Cachenv) LoadConfig() error {
+	configFile, err := os.Open(c.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to open config file: %w", err)
 	}
 	defer configFile.Close()
 
 	decoder := yaml.NewDecoder(configFile)
-	if err := decoder.Decode(&m.Config); err != nil {
+	if err := decoder.Decode(&c.Config); err != nil {
 		return fmt.Errorf("failed to decode config: %w", err)
 	}
 
 	return nil
 }
 
-func (m *Cachenv) IsCommandMemoized(command string) bool {
-	_, ok := m.Config.Commands[command]
+func (c *Cachenv) IsCommandMemoized(command string) bool {
+	_, ok := c.Config.Commands[command]
 	return ok
 }
 
-func (m *Cachenv) Init() error {
-	if err := m.InitializeEnv(); err != nil {
-		return err
-	}
-
-	if err := m.LoadConfig(); err != nil {
-		return err
-	}
-
-	return m.CreateActivateScript()
+// Directory containing symlinks cmd -> cachenv executable
+func (c *Cachenv) DirLinksInPath() string {
+	return filepath.Join(c.Dir, LINKS_IN_PATH_NAME)
 }
 
-func (m *Cachenv) LinkCommand(cmd string) error {
-	symlinkPath := filepath.Join(m.BinDir, cmd)
-	oldbinPath := filepath.Join(m.OldBinDir, cmd)
+// Directory containing symlinks cmd -> real cmd
+func (c *Cachenv) DirLinksToReal() string {
+	return filepath.Join(c.Dir, LINKS_TO_REAL_NAME)
+}
 
-	// Path to the cachenv binary
-	cachenvPath, err := os.Executable()
+// Relative symlink target for links pointing from DirLinksInPath -> DirLinksToReal
+func (c *Cachenv) LinkToRealRelative(cmdName string) string {
+	return filepath.Join("..", LINKS_TO_REAL_NAME, cmdName)
+}
+
+// Name of link which appears in $PATH due to activate script
+func (c *Cachenv) LinkInPath(cmd string) string {
+	return filepath.Join(c.DirLinksInPath(), cmd)
+}
+
+// Name of link that points to the real cmd
+func (c *Cachenv) LinkToReal(cmd string) string {
+	return filepath.Join(c.DirLinksToReal(), cmd)
+}
+
+// Path to the real cachenv executable
+func (c *Cachenv) LinkToRealCachenv() string {
+	return filepath.Join(c.DirLinksToReal(), "cachenv")
+}
+
+func (c *Cachenv) CreateLinksDirs() error {
+	for _, dir := range []string{c.DirLinksInPath(), c.DirLinksToReal()} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create %s, directory: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// Creates a symlink to the cachenv executable. We can't just use
+// LinkCommand("cachenv") because while activated, 'cachenv' is a shell
+// function and won't be findable by LinkCommand().
+func (c *Cachenv) CreateCachenvLink() error {
+	cachenvExecPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get cachenv executable path: %w", err)
 	}
-
-	// Remove existing symlink if it exists. Creating all new symlinks
-	// means targets are always up to date after running `cachenv link`.
-	if _, err := os.Lstat(symlinkPath); err == nil {
-		if err := os.Remove(symlinkPath); err != nil {
-			return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
-		}
+	if err := os.Symlink(cachenvExecPath, c.LinkToRealCachenv()); err != nil {
+		return fmt.Errorf("failed to create symlink to real cachenv: %w", err)
 	}
-	if _, err := os.Lstat(oldbinPath); err == nil {
-		if err := os.Remove(oldbinPath); err != nil {
-			return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
-		}
+	return nil
+}
+
+func (c *Cachenv) Init() error {
+	if err := c.InitializeEnv(); err != nil {
+		return err
 	}
 
-	// Create symlink oldbin/<cmd> -> original absolute path to <cmd>
-	// to avoid recursive cachenv invocations
-	if cmdPath, err := exec.LookPath(cmd); err == nil {
-		// create a link to the original command in the oldbin directory
-		if err := os.Symlink(cmdPath, oldbinPath); err != nil {
+	if err := c.LoadConfig(); err != nil {
+		return err
+	}
+
+	if err := c.CreateActivateScript(); err != nil {
+		return err
+	}
+
+	if err := c.CreateLinksDirs(); err != nil {
+		return err
+	}
+
+	if err := c.CreateCachenvLink(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Cachenv) LinkCommand(cmd string) error {
+	linkInPath := c.LinkInPath(cmd)
+	linkToReal := c.LinkToReal(cmd)
+
+	// Remove existing symlinks for cmd if they exist.
+	for _, link := range []string{linkInPath, linkToReal} {
+		if _, err := os.Lstat(link); err == nil {
+			if err := os.Remove(link); err != nil {
+				return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to stat symlink for %s: %w", cmd, err)
+		}
+	}
+
+	// Order matters here!
+
+	// 1. Create symlink cmd -> real cmd (via exec.LookPath), to avoid recursive
+	// cachenv invocations
+	if realPath, err := exec.LookPath(cmd); err == nil {
+		if err := os.Symlink(realPath, linkToReal); err != nil {
 			return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
 		}
+	} else {
+		return fmt.Errorf("failed to find real path for %s: %w", cmd, err)
 	}
 
-	// Create symlink bin/<cmd> -> cachenv
-	if err := os.Symlink(cachenvPath, symlinkPath); err != nil {
+	// 2. Create symlink <cmd in $PATH> -> cachenv, so we can intercept
+	// invocations
+	// Note: we use a relative link target to make envs more easily portable
+	if err := os.Symlink(c.LinkToRealRelative("cachenv"), linkInPath); err != nil {
 		return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
 	}
 
@@ -107,21 +171,14 @@ func (m *Cachenv) LinkCommand(cmd string) error {
 }
 
 // LinkCommands synchronizes actual symlinks with config
-func (m *Cachenv) LinkCommands() error {
-	// Ensure DIR/bin and DIR/bin.old exist
-	for _, dir := range []string{m.BinDir, m.OldBinDir} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create %s, directory: %w", dir, err)
-		}
-	}
-
+func (c *Cachenv) LinkCommands() error {
 	// Iterate over commands from the config file
-	for cmd := range m.Config.Commands {
-		m.LinkCommand(cmd)
+	for cmd := range c.Config.Commands {
+		c.LinkCommand(cmd)
 	}
 
 	// Iterate over symlinks to delete any that are not in the config
-	entries, err := os.ReadDir(m.BinDir)
+	entries, err := os.ReadDir(c.DirLinksInPath())
 	if err != nil {
 		return fmt.Errorf("failed to read bin directory: %w", err)
 	}
@@ -129,8 +186,8 @@ func (m *Cachenv) LinkCommands() error {
 		if entry.Name() == "activate" {
 			continue
 		}
-		if _, ok := m.Config.Commands[entry.Name()]; !ok {
-			symlinkPath := filepath.Join(m.BinDir, entry.Name())
+		if _, ok := c.Config.Commands[entry.Name()]; !ok {
+			symlinkPath := filepath.Join(c.DirLinksInPath(), entry.Name())
 			if err := os.Remove(symlinkPath); err != nil {
 				return fmt.Errorf("failed to remove symlink for %s: %w", entry.Name(), err)
 			}
@@ -141,14 +198,9 @@ func (m *Cachenv) LinkCommands() error {
 	return nil
 }
 
-func (m *Cachenv) CreateActivateScript() error {
+func (c *Cachenv) CreateActivateScript() error {
 	// Define the path to the activate script within the bin directory
-	activateScriptPath := filepath.Join(m.Dir, "activate")
-
-	cachenvExecPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get cachenv executable path: %w", err)
-	}
+	activateScriptPath := filepath.Join(c.Dir, "activate")
 
 	// Define the content of the activate script
 	activateScriptContent := fmt.Sprintf(`
@@ -207,17 +259,17 @@ cachenv() {
 
     if [ "$1" = "add" ] || [ "$1" = "link" ]; then
         # Needed for some commands after changing PATH
-		hash -r 2>/dev/null
+        hash -r 2>/dev/null
     fi
 
-	return $cachenv_exit_code
+    return $cachenv_exit_code
 }
 
 export CACHENV="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export _CACHENV_OLD_PATH="$PATH"
-export _CACHENV_EXECUTABLE="%s"
+export _CACHENV_EXECUTABLE="${CACHENV}/%s/cachenv"
 
-export PATH="$CACHENV/bin:$PATH"
+export PATH="$CACHENV/%s:$PATH"
 
 # Needed for some commands after changing PATH
 hash -r 2>/dev/null
@@ -230,10 +282,10 @@ else
     PS1="($(basename "$CACHENV")) ${PS1-}"
 fi
 export PS1
-`, cachenvExecPath)
+`, LINKS_TO_REAL_NAME, LINKS_IN_PATH_NAME)
 
 	// Ensure the bin directory exists
-	if err := os.MkdirAll(m.BinDir, 0755); err != nil {
+	if err := os.MkdirAll(c.DirLinksInPath(), 0755); err != nil {
 		return fmt.Errorf("failed to create bin directory: %w", err)
 	}
 
@@ -248,7 +300,7 @@ export PS1
 
 // InitializeEnv creates the cache directory and initializes the config file
 func (c *Cachenv) InitializeEnv() error {
-	// Create the directory if it does not exist
+	// Create the c.Dir if it does not exist
 	if _, err := os.Stat(c.Dir); os.IsNotExist(err) {
 		if err := os.MkdirAll(c.Dir, 0755); err != nil {
 			return fmt.Errorf("failed to create cache directory: %w", err)
@@ -257,11 +309,10 @@ func (c *Cachenv) InitializeEnv() error {
 
 	// Create the config file if it does not exist
 	if _, err := os.Stat(c.ConfigPath); os.IsNotExist(err) {
-		// Initialize a default config
 		defaultConfig := Config{
 			Commands: make(map[string]CommandConfig, 0),
 			Cache: CacheConfig{
-				MaxEntries: 1000,
+				MaxEntries: 1000, // TODO make configurable
 			},
 		}
 		configFile, err := os.Create(c.ConfigPath)
@@ -279,50 +330,71 @@ func (c *Cachenv) InitializeEnv() error {
 	return nil
 }
 
-func (m *Cachenv) HandleMemoizedCommand(cmd string, args []string) int {
-	key := KeyFrom(cmd, args)
-	var stdout, stderr []byte
+type ExecResult struct {
+	Stdout   []byte
+	Stderr   []byte
+	ExitCode int
+}
+
+func (c *Cachenv) PrepareRealCommand(cmdName string, args ...string) *exec.Cmd {
+	return exec.Command(filepath.Join(c.DirLinksToReal(), cmdName), args...)
+}
+
+func (c *Cachenv) ExecuteRealCommand(cmdName string, args ...string) (ExecResult, error) {
 	var exitCode int
+	var stdoutBuf, stderrBuf bytes.Buffer
+
+	cmd := c.PrepareRealCommand(cmdName, args...)
+
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode = exitError.ExitCode()
+		} else {
+			return ExecResult{}, fmt.Errorf("Error executing command: %v\n", err)
+		}
+	} else {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+
+	return ExecResult{
+		Stdout:   stdoutBuf.Bytes(),
+		Stderr:   stderrBuf.Bytes(),
+		ExitCode: exitCode,
+	}, nil
+}
+
+func (c *Cachenv) HandleMemoizedCommand(cmd string, args []string) int {
+	key := KeyFrom(cmd, args)
+	var result ExecResult
 	var err error
 
-	if m.Store.Exists(key) {
-		stdout, stderr, exitCode, err = m.Store.ReadFromCache(key)
+	if c.Store.Exists(key) {
+		result, err = c.Store.ReadFromCache(key)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to read from cache: %v\n", err)
 			return 1
 		}
 	} else {
-		realCmdPath := filepath.Join(m.OldBinDir, cmd)
-		cmd := exec.Command(realCmdPath, args...)
-		var stdoutBuf, stderrBuf bytes.Buffer
-		cmd.Stdout = &stdoutBuf
-		cmd.Stderr = &stderrBuf
-
-		err = cmd.Run()
-		exitCode := 0
+		result, err = c.ExecuteRealCommand(cmd, args...)
 		if err != nil {
-			if exitError, ok := err.(*exec.ExitError); ok {
-				exitCode = exitError.ExitCode()
-			} else {
-				fmt.Fprintf(os.Stderr, "Error executing command: %v\n", err)
-				return 1
-			}
-		} else {
-			exitCode = cmd.ProcessState.ExitCode()
+			fmt.Fprintf(os.Stderr, "Error executing command: %v\n", err)
+			return 1
 		}
 
-		stdout = stdoutBuf.Bytes()
-		stderr = stderrBuf.Bytes()
-		err = m.Store.WriteToCache(key, stdout, stderr, exitCode)
+		err = c.Store.WriteToCache(key, result)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to write to cache: %v\n", err)
 			return 1
 		}
 	}
 
-	fmt.Fprint(os.Stdout, string(stdout))
-	fmt.Fprint(os.Stderr, string(stderr))
-	return exitCode
+	fmt.Fprint(os.Stdout, string(result.Stdout))
+	fmt.Fprint(os.Stderr, string(result.Stderr))
+	return result.ExitCode
 }
 
 func main() {
@@ -356,6 +428,8 @@ func handleCachenvSubcommand(subcommand string, args []string) int {
 		return handleKey(args)
 	case "touch":
 		return handleTouch(args)
+	case "diff":
+		return handleDiff(args)
 	default:
 		fmt.Println("Invalid command. Available commands are: init, link, add")
 		return 1
@@ -380,21 +454,13 @@ func handleInit(args []string) int {
 
 // - `cachenv link` while activated
 func handleLink(args []string) int {
-	var err error
-	var dir string
-
-	if dir, err = getActiveCachenvDir(); err != nil {
-		fmt.Printf("Error: %v\n", err)
+	c, err := loadActiveCachenv()
+	if err != nil {
+		fmt.Printf("Error loading active cachenv: %v\n", err)
 		return 1
 	}
 
-	cachenv := loadCachenvFromDir(dir)
-	if err := cachenv.LoadConfig(); err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		return 1
-	}
-
-	if err := cachenv.LinkCommands(); err != nil {
+	if err := c.LinkCommands(); err != nil {
 		fmt.Printf("Error creating symlinks: %v\n", err)
 		return 1
 	}
@@ -408,26 +474,20 @@ func handleAdd(args []string) int {
 		return 1
 	}
 
-	dir, err := getActiveCachenvDir()
+	c, err := loadActiveCachenv()
 	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
+		fmt.Printf("Error loading active cachenv: %v\n", err)
 		return 1
 	}
 
-	cachenv := loadCachenvFromDir(dir)
-	if err := cachenv.LoadConfig(); err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
+	cmdName := args[0]
+	if c.IsCommandMemoized(cmdName) {
+		fmt.Printf("Command '%s' is already memoized.\n", cmdName)
 		return 1
 	}
 
-	command := args[0]
-	if cachenv.IsCommandMemoized(command) {
-		fmt.Printf("Command '%s' is already memoized.\n", command)
-		return 1
-	}
-
-	cachenv.Config.Commands[command] = CommandConfig{}
-	configFile, err := os.Create(cachenv.ConfigPath)
+	c.Config.Commands[cmdName] = CommandConfig{}
+	configFile, err := os.Create(c.ConfigPath)
 	if err != nil {
 		fmt.Printf("Error opening config file: %v\n", err)
 		return 1
@@ -435,14 +495,14 @@ func handleAdd(args []string) int {
 	defer configFile.Close()
 
 	encoder := yaml.NewEncoder(configFile)
-	if err := encoder.Encode(cachenv.Config); err != nil {
+	if err := encoder.Encode(c.Config); err != nil {
 		fmt.Printf("Error encoding config: %v\n", err)
 		return 1
 	}
 
-	fmt.Printf("Command '%s' added to memoized commands.\n", command)
+	fmt.Printf("Command '%s' added to memoized commands.\n", cmdName)
 
-	if err := cachenv.LinkCommands(); err != nil {
+	if err := c.LinkCommand(cmdName); err != nil {
 		fmt.Printf("Error creating symlinks: %v\n", err)
 		return 1
 	}
@@ -469,31 +529,71 @@ func handleTouch(args []string) int {
 		return 1
 	}
 
-	dir, err := getActiveCachenvDir()
+	c, err := loadActiveCachenv()
 	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		return 1
-	}
-
-	ce := loadCachenvFromDir(dir)
-	if err := ce.LoadConfig(); err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
+		fmt.Printf("Error loading active cachenv: %v\n", err)
 		return 1
 	}
 
 	command := args[0]
-	if !ce.IsCommandMemoized(command) {
+	if !c.IsCommandMemoized(command) {
 		fmt.Printf("Command '%s' is not memoized.\n", command)
 		return 1
 	}
 
 	key := KeyFrom(command, args[1:])
-	err = ce.Store.WriteToCache(key, []byte{}, []byte{}, 0)
+	err = c.Store.WriteToCache(key, ExecResult{})
 	fmt.Println(key.Hash)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write to cache: %v\n", err)
 		return 1
 	}
+	return 0
+}
+
+// Run the real command and print `diff -u <cached> <actual>`
+func handleDiff(args []string) int {
+	if len(args) < 1 {
+		fmt.Println("Usage: cachenv diff <command>")
+		return 1
+	}
+
+	c, err := loadActiveCachenv()
+	if err != nil {
+		fmt.Printf("Error loading active cachenv: %v\n", err)
+		return 1
+	}
+
+	// Run the real command and pipe its output to diff
+	cmd := c.PrepareRealCommand(args[0], args[1:]...)
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating pipe for '%s': %v\n", args[0], err)
+		return 1
+	}
+	cmd.Stderr = os.Stderr
+
+	key := KeyFrom(args[0], args[1:])
+	diffCmd := exec.Command("diff", c.Store.stdoutPath(key), "-")
+
+	diffCmd.Stdin = stdoutPipe
+	diffCmd.Stdout = os.Stdout
+	diffCmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting '%s': %v\n", args[0], err)
+		return 1
+	}
+
+	if err := diffCmd.Run(); err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			return exitError.ExitCode()
+		} else {
+			fmt.Fprintf(os.Stderr, "Error running diff: %v\n", err)
+			return 1
+		}
+	}
+
 	return 0
 }
 
@@ -509,18 +609,23 @@ func loadCachenvFromDir(dir string) *Cachenv {
 	return NewCachenv(filepath.Join(dir, CONFIG_NAME), dir)
 }
 
+func loadActiveCachenv() (*Cachenv, error) {
+	dir, err := getActiveCachenvDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find active cachenv: %v\n", err)
+	}
+	c := loadCachenvFromDir(dir)
+	if err := c.LoadConfig(); err != nil {
+		return nil, fmt.Errorf("failed to load config: %v\n", err)
+	}
+	return c, nil
+}
+
 // HandleMemoizedCommand handles the execution of a memoized command
 func handleMemoizedCommand(cmd string, args []string) int {
-	dir := os.Getenv("CACHENV")
-	if dir == "" {
-		fmt.Println("Error: cachenv directory not set. Cannot execute memoized command.")
-		return 1
+	c, err := loadActiveCachenv()
+	if err != nil {
+		fmt.Printf("Error loading active cachenv: %v\n", err)
 	}
-
-	cachenv := loadCachenvFromDir(dir)
-	if err := cachenv.LoadConfig(); err != nil {
-		fmt.Printf("Error loading config for memoized command '%s': %v\n", cmd, err)
-		return 1
-	}
-	return cachenv.HandleMemoizedCommand(cmd, args)
+	return c.HandleMemoizedCommand(cmd, args)
 }

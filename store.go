@@ -47,38 +47,45 @@ func (s *Store) Exists(key CacheKey) bool {
 	return !os.IsNotExist(err)
 }
 
-func (s *Store) WriteToCache(key CacheKey, stdout, stderr []byte, exitCode int) error {
+func (s *Store) WriteToCache(key CacheKey, result ExecResult) error {
 	cacheDir := s.KeyDir(key)
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(s.stdoutPath(key), stdout, 0644); err != nil {
+	if err := os.WriteFile(s.stdoutPath(key), result.Stdout, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.stderrPath(key), stderr, 0644); err != nil {
+	if err := os.WriteFile(s.stderrPath(key), result.Stderr, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.exitcodePath(key), []byte(fmt.Sprint(exitCode)), 0644); err != nil {
+	if err := os.WriteFile(s.exitcodePath(key), []byte(fmt.Sprint(result.ExitCode)), 0644); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (s *Store) ReadFromCache(key CacheKey) (stdout, stderr []byte, exitCode int, err error) {
+func (s *Store) ReadFromCache(key CacheKey) (ExecResult, error) {
+	var stdout, stderr []byte
+	var exitCode int
+	var err error
 	stdout, err = os.ReadFile(s.stdoutPath(key))
 	if err != nil {
-		return
+		return ExecResult{}, err
 	}
 	stderr, err = os.ReadFile(s.stderrPath(key))
 	if err != nil {
-		return
+		return ExecResult{}, err
 	}
 	exitCodeBytes, err := os.ReadFile(s.exitcodePath(key))
 	if err != nil {
-		return
+		return ExecResult{}, err
 	}
 	exitCode, err = strconv.Atoi(string(exitCodeBytes))
-	return
+	return ExecResult{
+		Stdout:   stdout,
+		Stderr:   stderr,
+		ExitCode: exitCode,
+	}, nil
 }
