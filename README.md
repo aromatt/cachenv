@@ -15,10 +15,50 @@ rapid iteration.
 The workflow mirrors that of [virtualenv](https://virtualenv.pypa.io/en/latest/) -
 you create an environment, activate it, and work within it.
 
+## Use Cases
+* Creating consistent, dependency-free testing environments
+* Rapidly iterating on scripts or notebooks that rely on external services or data processing
+* Efficiently constructing CLI pipelines that involve large inputs or expensive filters/aggregations
+* Eliminating redundant calls to metered APIs
+
+## Usage
+Initialize and activate a new cachenv:
+```
+$ cachenv init .cachenv
+Created activate script at .cachenv/activate
+
+$ source .cachenv/activate
+```
+
+Enable memoization for `ls`:
+```
+(.cachenv) $ cachenv add ls
+Command 'ls' added to memoized commands.
+Refreshed symlink for ls
+```
+
+Enjoy(?) memoization for `ls`:
+```
+(.cachenv) $ ls
+foo
+
+(.cachenv) $ touch bar
+(.cachenv) $ ls
+foo
+
+```
+
+Try diff mode:
+```
+(.cachenv) $ cachenv diff ls
+0a1
+> bar
+```
+
 ## Features
 <table>
   <tr>
-    <th>Done</th>
+    <th>Implemented</th>
     <th>Feature</th>
     <th>Description</th>
   </tr>
@@ -65,10 +105,3 @@ you create an environment, activate it, and work within it.
         systems.</td>
   </tr>
 </table>
-
-## Use Cases
-
-* Creating consistent, dependency-free testing environments
-* Rapidly iterating on scripts or notebooks that rely on external services or data processing
-* Efficiently constructing CLI pipelines that involve large inputs or expensive filters/aggregations
-* Eliminating redundant calls to metered APIs
