@@ -449,7 +449,7 @@ func handleCachenvSubcommand(subcommand string, args []string) int {
 	case "diff":
 		return handleDiff(args)
 	default:
-		fmt.Println("Invalid command. Available commands are: init, link, add")
+		fmt.Println("Invalid command. Available commands are: init, link, add, key, touch, diff.")
 		return 1
 	}
 }
