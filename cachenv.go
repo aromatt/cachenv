@@ -585,7 +585,8 @@ func handleTouch(args []string) int {
 
 	command := args[0]
 	if !c.IsCommandMemoized(command) {
-		fmt.Printf("Command '%s' is not memoized.\n", command)
+		fmt.Fprintf(os.Stderr, "Command '%s' is not memoized.\n", command)
+		fmt.Fprintf(os.Stderr, "Use 'cachenv add %s' to add it.\n", command)
 		return 1
 	}
 
