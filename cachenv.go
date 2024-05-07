@@ -184,7 +184,7 @@ func (c *Cachenv) RefreshLinksFor(cmd string) error {
 		return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
 	}
 
-	fmt.Printf("Refreshed symlink for %s\n", cmd)
+	fmt.Fprintf(os.Stderr, "Refreshed symlink for %s\n", cmd)
 	return nil
 }
 
@@ -215,7 +215,7 @@ func (c *Cachenv) RefreshLinks() error {
 			if err := os.Remove(symlinkPath); err != nil {
 				return fmt.Errorf("failed to remove symlink for %s: %w", entry.Name(), err)
 			}
-			fmt.Printf("Removed symlink for %s\n", entry.Name())
+			fmt.Fprintf(os.Stderr, "Removed symlink for %s\n", entry.Name())
 		}
 	}
 
@@ -318,7 +318,7 @@ export PS1
 		return fmt.Errorf("failed to write activate script: %w", err)
 	}
 
-	fmt.Printf("Created activate script at %s\n", activateScriptPath)
+	fmt.Fprintf(os.Stderr, "Created activate script at %s\n", activateScriptPath)
 	return nil
 }
 
@@ -424,7 +424,7 @@ func main() {
 	switch invokedCmd {
 	case "cachenv":
 		if len(os.Args) < 2 {
-			fmt.Println("Usage: cachenv <command> [arguments]")
+			fmt.Fprintln(os.Stderr, "Usage: cachenv <command> [arguments]")
 			return
 		}
 		exitCode = handleCachenvSubcommand(os.Args[1], os.Args[2:])
@@ -449,21 +449,21 @@ func handleCachenvSubcommand(subcommand string, args []string) int {
 	case "diff":
 		return handleDiff(args)
 	default:
-		fmt.Println("Invalid command. Available commands are: init, link, add, key, touch, diff.")
+		fmt.Fprintln(os.Stderr, "Invalid command. Available commands are: init, link, add, key, touch, diff.")
 		return 1
 	}
 }
 
 func handleInit(args []string) int {
 	if len(args) < 1 {
-		fmt.Println("Usage: cachenv init <DIR>")
+		fmt.Fprintln(os.Stderr, "Usage: cachenv init <DIR>")
 		return 1
 	}
 	dir := args[0]
 
 	cachenv := loadCachenvFromDir(dir)
 	if err := cachenv.Init(); err != nil {
-		fmt.Printf("Error initializing cachenv: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error initializing cachenv: %v\n", err)
 		return 1
 	}
 
@@ -475,7 +475,7 @@ func handleInit(args []string) int {
 // directory. This also refreshes the symlink to the cachenv executable.
 func handleLink(args []string) int {
 	if len(args) > 1 {
-		fmt.Println("Usage: cachenv link [DIR]")
+		fmt.Fprintln(os.Stderr, "Usage: cachenv link [DIR]")
 		return 1
 	}
 
@@ -483,7 +483,7 @@ func handleLink(args []string) int {
 	var err error
 	if !IsCachenvActivated() {
 		if len(args) != 1 {
-			fmt.Println("Usage: cachenv link DIR")
+			fmt.Fprintln(os.Stderr, "Usage: cachenv link DIR")
 			return 1
 		}
 		c = loadCachenvFromDir(args[0])
@@ -492,24 +492,24 @@ func handleLink(args []string) int {
 		// Refresh symlink to cachenv executable. Note: this can't be done while
 		// activated.
 		if err = c.RemoveCachenvLink(); err != nil {
-			fmt.Printf("Error removing symlink to cachenv: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error removing symlink to cachenv: %v\n", err)
 			return 1
 		}
 		if err = c.CreateCachenvLink(); err != nil {
-			fmt.Printf("Error creating symlink to cachenv: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error creating symlink to cachenv: %v\n", err)
 			return 1
 		}
-		fmt.Println("Refreshed symlink for cachenv")
+		fmt.Fprintln(os.Stderr, "Refreshed symlink for cachenv")
 	} else {
 		c, err = loadActiveCachenv()
 		if err != nil {
-			fmt.Printf("Error loading active cachenv: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error loading active cachenv: %v\n", err)
 			return 1
 		}
 	}
 
 	if err := c.RefreshLinks(); err != nil {
-		fmt.Printf("Error creating symlinks: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error creating symlinks: %v\n", err)
 		return 1
 	}
 
@@ -518,40 +518,40 @@ func handleLink(args []string) int {
 
 func handleAdd(args []string) int {
 	if len(args) < 1 {
-		fmt.Println("Usage: cachenv add <command>")
+		fmt.Fprintln(os.Stderr, "Usage: cachenv add <command>")
 		return 1
 	}
 
 	c, err := loadActiveCachenv()
 	if err != nil {
-		fmt.Printf("Error loading active cachenv: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error loading active cachenv: %v\n", err)
 		return 1
 	}
 
 	cmdName := args[0]
 	if c.IsCommandMemoized(cmdName) {
-		fmt.Printf("Command '%s' is already memoized.\n", cmdName)
+		fmt.Fprintf(os.Stderr, "Command '%s' is already memoized.\n", cmdName)
 		return 1
 	}
 
 	c.Config.Commands[cmdName] = CommandConfig{}
 	configFile, err := os.Create(c.ConfigPath)
 	if err != nil {
-		fmt.Printf("Error opening config file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error opening config file: %v\n", err)
 		return 1
 	}
 	defer configFile.Close()
 
 	encoder := yaml.NewEncoder(configFile)
 	if err := encoder.Encode(c.Config); err != nil {
-		fmt.Printf("Error encoding config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error encoding config: %v\n", err)
 		return 1
 	}
 
-	fmt.Printf("Command '%s' added to memoized commands.\n", cmdName)
+	fmt.Fprintf(os.Stderr, "Command '%s' added to memoized commands.\n", cmdName)
 
 	if err := c.RefreshLinksFor(cmdName); err != nil {
-		fmt.Printf("Error creating symlinks: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error creating symlinks: %v\n", err)
 		return 1
 	}
 
@@ -561,7 +561,7 @@ func handleAdd(args []string) int {
 // Returns the hash ID for the provided cached command (+ args)
 func handleKey(args []string) int {
 	if len(args) < 1 {
-		fmt.Println("Usage: cachenv key <command>")
+		fmt.Fprintln(os.Stderr, "Usage: cachenv key <command>")
 		return 1
 	}
 	fmt.Println(KeyFrom(args[0], args[1:]).Hash)
@@ -573,13 +573,13 @@ func handleKey(args []string) int {
 // TODO: actually do the latter
 func handleTouch(args []string) int {
 	if len(args) < 1 {
-		fmt.Println("Usage: cachenv touch <command>")
+		fmt.Fprintln(os.Stderr, "Usage: cachenv touch <command>")
 		return 1
 	}
 
 	c, err := loadActiveCachenv()
 	if err != nil {
-		fmt.Printf("Error loading active cachenv: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error loading active cachenv: %v\n", err)
 		return 1
 	}
 
@@ -602,13 +602,13 @@ func handleTouch(args []string) int {
 // Run the real command and print `diff -u <cached> <actual>`
 func handleDiff(args []string) int {
 	if len(args) < 1 {
-		fmt.Println("Usage: cachenv diff <command>")
+		fmt.Fprintln(os.Stderr, "Usage: cachenv diff <command>")
 		return 1
 	}
 
 	c, err := loadActiveCachenv()
 	if err != nil {
-		fmt.Printf("Error loading active cachenv: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error loading active cachenv: %v\n", err)
 		return 1
 	}
 
@@ -678,7 +678,7 @@ func loadActiveCachenv() (*Cachenv, error) {
 func handleMemoizedCommand(cmd string, args []string) int {
 	c, err := loadActiveCachenv()
 	if err != nil {
-		fmt.Printf("Error loading active cachenv: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error loading active cachenv: %v\n", err)
 	}
 	return c.HandleMemoizedCommand(cmd, args)
 }
