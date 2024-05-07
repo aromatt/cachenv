@@ -115,6 +115,7 @@ func (c *Cachenv) CreateCachenvLink() error {
 	return nil
 }
 
+// Removes the symlink created by CreateCachenvLink().
 func (c *Cachenv) RemoveCachenvLink() error {
 	if _, err := os.Lstat(c.LinkToRealCachenv()); err == nil {
 		if err := os.Remove(c.LinkToRealCachenv()); err != nil {
@@ -188,8 +189,7 @@ func (c *Cachenv) RefreshLinksFor(cmd string) error {
 	return nil
 }
 
-// Resets all symlinks
-func (c *Cachenv) RefreshLinks() error {
+func (c *Cachenv) RefreshLinksForAll() error {
 	var err error
 
 	// Create symlinks for all commands in the config
@@ -204,6 +204,7 @@ func (c *Cachenv) RefreshLinks() error {
 	if err != nil {
 		return fmt.Errorf("failed to read bin directory: %w", err)
 	}
+
 	for _, entry := range entries {
 		if _, ok := c.Config.Commands[entry.Name()]; !ok {
 			// Skip the cachenv symlink (it would otherwise be removed because
@@ -314,7 +315,9 @@ export PS1
 	}
 
 	// Write the activate script content to the file
-	if err := os.WriteFile(activateScriptPath, []byte(activateScriptContent), 0755); err != nil {
+	// TODO: do this atomically
+	err := os.WriteFile(activateScriptPath, []byte(activateScriptContent), 0755)
+	if err != nil {
 		return fmt.Errorf("failed to write activate script: %w", err)
 	}
 
@@ -416,8 +419,8 @@ func (c *Cachenv) HandleMemoizedCommand(cmd string, args []string) int {
 }
 
 func main() {
-	// This program is used both for controlling cachenv (e.g. `cachenv init`) and
-	// for intercepting memoized commands. Use $0 to determine which is
+	// This program is used both for controlling cachenv (e.g. `cachenv init`)
+	// and for intercepting memoized commands. Use $0 to determine which is
 	// happening.
 	invokedCmd := filepath.Base(os.Args[0])
 	exitCode := 0
@@ -454,6 +457,15 @@ func handleCachenvSubcommand(subcommand string, args []string) int {
 	}
 }
 
+// HandleMemoizedCommand handles the execution of a memoized command
+func handleMemoizedCommand(cmd string, args []string) int {
+	c, err := loadActiveCachenv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading active cachenv: %v\n", err)
+	}
+	return c.HandleMemoizedCommand(cmd, args)
+}
+
 func handleInit(args []string) int {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: cachenv init <DIR>")
@@ -481,7 +493,7 @@ func handleLink(args []string) int {
 
 	var c *Cachenv
 	var err error
-	if !IsCachenvActivated() {
+	if !isCachenvActivated() {
 		if len(args) != 1 {
 			fmt.Fprintln(os.Stderr, "Usage: cachenv link DIR")
 			return 1
@@ -508,7 +520,7 @@ func handleLink(args []string) int {
 		}
 	}
 
-	if err := c.RefreshLinks(); err != nil {
+	if err := c.RefreshLinksForAll(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating symlinks: %v\n", err)
 		return 1
 	}
@@ -646,7 +658,7 @@ func handleDiff(args []string) int {
 	return 0
 }
 
-func IsCachenvActivated() bool {
+func isCachenvActivated() bool {
 	_, ok := os.LookupEnv("CACHENV")
 	return ok
 }
@@ -673,13 +685,4 @@ func loadActiveCachenv() (*Cachenv, error) {
 		return nil, fmt.Errorf("failed to load config: %v\n", err)
 	}
 	return c, nil
-}
-
-// HandleMemoizedCommand handles the execution of a memoized command
-func handleMemoizedCommand(cmd string, args []string) int {
-	c, err := loadActiveCachenv()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading active cachenv: %v\n", err)
-	}
-	return c.HandleMemoizedCommand(cmd, args)
 }
