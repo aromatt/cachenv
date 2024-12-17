@@ -9,7 +9,7 @@ Note: this repo is still in early development; the README is aspirational.
 scripts, and pipelines. In fact, any program that calls `exec()` can use `cachenv`.
 
 It's like function [memoization](https://en.wikipedia.org/wiki/Memoization), but at
-the process boundary. This is useful in a variety of contexts, especially testing,
+the process boundary. This is useful for a variety of things, especially testing,
 rapid iteration, and ad hoc data processing.
 
 The workflow mirrors that of [virtualenv](https://virtualenv.pypa.io/en/latest/):
@@ -20,6 +20,16 @@ you create an environment, activate it, and work within it.
 * Rapidly iterating on scripts or notebooks that rely on external services or data processing
 * Efficiently constructing CLI pipelines that involve large inputs or expensive filters/aggregations
 * Eliminating redundant calls to metered APIs
+
+## How It Works
+Just like `virtualenv`, `cachenv` inserts symlinks at the front of your `PATH`.
+
+Calls to cached programs are intercepted, and the cache is checked (the cache key is
+a hash of the program name and arguments). On cache hits, the output is returned
+immediately. On misses, the original program is executed with the provided arguments, 
+and the cache is updated.
+
+![cachenv](https://github.com/user-attachments/assets/7d50463a-b8d1-4bc4-a932-c5b68c4fd177)
 
 ## Usage
 Initialize and activate a new cachenv:
