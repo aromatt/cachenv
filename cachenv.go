@@ -240,7 +240,7 @@ fi
 # Check if already activated
 if ! [ -z "$CACHENV" ]; then
     echo "cachenv is already activated."
-    exit 0
+    return 0
 fi
 
 # Function to deactivate cachenv and restore original environment
