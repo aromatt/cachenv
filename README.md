@@ -9,10 +9,10 @@ Note: this repo is still in early development; the README is aspirational.
 scripts, and pipelines. In fact, any program that calls `exec()` can use `cachenv`.
 
 It's like function [memoization](https://en.wikipedia.org/wiki/Memoization), but at
-the process boundary. This is useful in a variety of contexts, especially testing and
-rapid iteration.
+the process boundary. This is useful in a variety of contexts, especially testing,
+rapid iteration, and ad hoc data processing.
 
-The workflow mirrors that of [virtualenv](https://virtualenv.pypa.io/en/latest/) -
+The workflow mirrors that of [virtualenv](https://virtualenv.pypa.io/en/latest/):
 you create an environment, activate it, and work within it.
 
 ## Use Cases
@@ -37,7 +37,7 @@ Command 'ls' added to memoized commands.
 Refreshed symlink for ls
 ```
 
-Enjoy(?) memoization for `ls`:
+Enjoy memoization for `ls`:
 ```
 (.cachenv) $ ls
 foo
