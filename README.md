@@ -1,3 +1,6 @@
+> [!WARNING]
+> This project is still in early development; behavior may change without warning.
+
 # cachenv
 Versatile memoizing cache for program invocations, with a `virtualenv`-like
 interface.
@@ -47,7 +50,7 @@ Command 'ls' added to memoized commands.
 Refreshed symlink for ls
 ```
 
-Enjoy memoization for `ls`:
+Enjoy (?) memoization for `ls`:
 ```
 (.cachenv) $ ls
 foo
@@ -65,6 +68,10 @@ Try diff mode:
 > bar
 ```
 
+Deactivate:
+```
+$ deactivate_cachenv
+```
 ## Features
 <table>
   <tr>
@@ -75,24 +82,23 @@ Try diff mode:
   <tr>
     <td>✅</td>
     <td><strong>Comprehensive Caching</strong></td>
-    <td>Captures stdout, stderr, and exit codes, providing a complete snapshot of a
-        program's behavior given a particular input.</td>
+    <td>Captures stdout, stderr, and exit codes.</td>
   </tr>
   <tr>
     <td></td>
     <td><strong>Selective Memoization</strong></td>
-    <td>Supports precise configuration to selectively enable caching based on program
-        name, arguments, and/or input patterns.</td>
+    <td>Supports configuration to selectively enable caching based on program
+        arguments and regular expressions.</td>
   </tr>
   <tr>
     <td></td>
     <td><strong>Streaming Mode</strong></td>
-    <td>Supports caching at the line level, keyed by stdin.</td>
+    <td>Supports line-level caching of stdin.</td>
   </tr>
   <tr>
     <td></td>
     <td><strong>File Awareness</strong></td>
-    <td>Can optionally distinguish cache entries based on the contents of files
+    <td>Optionally distinguishes cache entries based on the contents of files
         provided as arguments (e.g., for <code>grep foo bar.txt</code>, refresh
         the cache when the content of <code>bar.txt</code> changes).</td>
   </tr>
@@ -106,12 +112,12 @@ Try diff mode:
   <tr>
     <td>✅</td>
     <td><strong>Diff Mode</strong></td>
-    <td>Can show changes in a program's behavior against a cached snapshot.</td>
+    <td>Show changes in a program's behavior against a cached snapshot.</td>
   </tr>
   <tr>
-    <td>✅</td>
+    <td></td>
     <td><strong>Cross-Environment Portability</strong></td>
-    <td>Enables cache sharing and reuse across different machines and operating
-        systems.</td>
+    <td>Enables sharing and reuse of cached data across different shells and 
+        operating systems.</td>
   </tr>
 </table>
