@@ -27,10 +27,10 @@ you create an environment, activate it, and work within it.
 ## How It Works
 Just like `virtualenv`, `cachenv` inserts symlinks at the front of your `PATH`.
 
-Calls to cached programs are intercepted, and the cache is checked (the cache key is
-a hash of the program name and arguments). On cache hits, the output is returned
-immediately. On misses, the original program is executed with the provided arguments, 
-and the cache is updated.
+`cachenv` intercepts calls to cached programs and queries its cache.
+The cache key is a hash of the program name and arguments.
+On cache hits, cachenv replays stdout, stderr and the exit code.
+On misses, the original program is executed with the provided arguments, and the cache is updated.
 
 ![cachenv](https://github.com/user-attachments/assets/7d50463a-b8d1-4bc4-a932-c5b68c4fd177)
 
