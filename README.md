@@ -1,5 +1,6 @@
 > [!WARNING]
 > This project is still in early development; behavior may change without warning.
+> Also only works in bash!
 
 # cachenv
 Versatile memoizing cache for program invocations, with a `virtualenv`-like
