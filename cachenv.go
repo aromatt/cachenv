@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	CONFIG_NAME        = "config.yaml"
-	LINKS_IN_PATH_NAME = "links-in-path"
-	LINKS_TO_REAL_NAME = "links-to-real"
+	CONFIG_NAME = "config.yaml"
+	LINKS_SHIM  = "links-shim"
+	LINKS_REAL  = "links-real"
 )
 
 type ExecResult struct {
@@ -59,38 +59,42 @@ func (c *Cachenv) IsCommandMemoized(command string) bool {
 	return ok
 }
 
-// Directory containing symlinks cmd -> cachenv executable
-func (c *Cachenv) DirLinksInPath() string {
-	return filepath.Join(c.Dir, LINKS_IN_PATH_NAME)
+// LinksDirShim returns the directory containing symlinks cmd -> cachenv executable.
+func (c *Cachenv) LinksDirShim() string {
+	return filepath.Join(c.Dir, LINKS_SHIM)
 }
 
-// Directory containing symlinks cmd -> real cmd
-func (c *Cachenv) DirLinksToReal() string {
-	return filepath.Join(c.Dir, LINKS_TO_REAL_NAME)
+// LinksDirReal returns the directory containing symlinks cmd -> real cmd.
+func (c *Cachenv) LinksDirReal() string {
+	return filepath.Join(c.Dir, LINKS_REAL)
 }
 
-// Relative symlink target for links pointing from DirLinksInPath -> DirLinksToReal
+// LinkToRealRelative returns the relative symlink target for links pointing
+// from LinksDirShim -> LinksDirReal.
 func (c *Cachenv) LinkToRealRelative(cmdName string) string {
-	return filepath.Join("..", LINKS_TO_REAL_NAME, cmdName)
+	return filepath.Join("..", LINKS_REAL, cmdName)
 }
 
-// Name of link which appears in $PATH due to activate script
-func (c *Cachenv) LinkInPath(cmd string) string {
-	return filepath.Join(c.DirLinksInPath(), cmd)
+// Shim returns the name of the link which appears in $PATH due to activate
+// script.
+func (c *Cachenv) Shim(cmd string) string {
+	return filepath.Join(c.LinksDirShim(), cmd)
 }
 
-// Name of link that points to the real cmd
+// LinkToReal returns the name of the link that points to the real cmd.
 func (c *Cachenv) LinkToReal(cmd string) string {
-	return filepath.Join(c.DirLinksToReal(), cmd)
+	return filepath.Join(c.LinksDirReal(), cmd)
 }
 
-// Path to the real cachenv executable
+// Path to the real cachenv executable.
 func (c *Cachenv) LinkToRealCachenv() string {
-	return filepath.Join(c.DirLinksToReal(), "cachenv")
+	return filepath.Join(c.LinksDirReal(), "cachenv")
 }
 
+// CreateLinksDirs creates (mkdir -p) the directories where cachenv's symlinks
+// live.
 func (c *Cachenv) CreateLinksDirs() error {
-	for _, dir := range []string{c.DirLinksInPath(), c.DirLinksToReal()} {
+	for _, dir := range []string{c.LinksDirShim(), c.LinksDirReal()} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create %s, directory: %w", dir, err)
 		}
@@ -98,8 +102,8 @@ func (c *Cachenv) CreateLinksDirs() error {
 	return nil
 }
 
-// Creates a symlink to the cachenv executable. We can't just use
-// CreateLink("cachenv") because while activated, 'cachenv' is a shell
+// CreateCachenvLink creates a symlink to the cachenv executable. We can't just
+// use CreateLink("cachenv") because while activated, 'cachenv' is a shell
 // function and won't be findable by LinkCommand().
 func (c *Cachenv) CreateCachenvLink() error {
 	// Get the real path to the cachenv executable
@@ -115,7 +119,7 @@ func (c *Cachenv) CreateCachenvLink() error {
 	return nil
 }
 
-// Removes the symlink created by CreateCachenvLink().
+// RemoveCachenvLink removes the symlink created by CreateCachenvLink().
 func (c *Cachenv) RemoveCachenvLink() error {
 	if _, err := os.Lstat(c.LinkToRealCachenv()); err == nil {
 		if err := os.Remove(c.LinkToRealCachenv()); err != nil {
@@ -127,6 +131,8 @@ func (c *Cachenv) RemoveCachenvLink() error {
 	return nil
 }
 
+// Init initializes the cachenv environment by creating the necessary
+// directories, loading the config, and creating the activate script.
 func (c *Cachenv) Init() error {
 	if err := c.InitializeEnv(); err != nil {
 		return err
@@ -151,12 +157,14 @@ func (c *Cachenv) Init() error {
 	return nil
 }
 
+// RefreshLinksFor removes and recreates cachenv's symlinks for the named
+// command.
 func (c *Cachenv) RefreshLinksFor(cmd string) error {
-	linkInPath := c.LinkInPath(cmd)
+	shim := c.Shim(cmd)
 	linkToReal := c.LinkToReal(cmd)
 
 	// Remove existing symlinks for cmd if they exist.
-	for _, link := range []string{linkInPath, linkToReal} {
+	for _, link := range []string{shim, linkToReal} {
 		if _, err := os.Lstat(link); err == nil {
 			if err := os.Remove(link); err != nil {
 				return fmt.Errorf("failed to remove existing symlink for %s: %w", cmd, err)
@@ -168,8 +176,8 @@ func (c *Cachenv) RefreshLinksFor(cmd string) error {
 
 	// Order matters here!
 
-	// 1. Create symlink cmd -> real cmd (via exec.LookPath), to avoid recursive
-	// cachenv invocations
+	// 1. Create symlink pointing to real cmd (via exec.LookPath), to avoid
+	// recursive cachenv invocations.
 	if realPath, err := exec.LookPath(cmd); err == nil {
 		if err := os.Symlink(realPath, linkToReal); err != nil {
 			return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
@@ -178,10 +186,11 @@ func (c *Cachenv) RefreshLinksFor(cmd string) error {
 		return fmt.Errorf("failed to find real path for %s: %w", cmd, err)
 	}
 
-	// 2. Create symlink <cmd in $PATH> -> cachenv, so we can intercept
-	// invocations
+	// 2. Create symlink from shim to cachenv binary, so we can intercept
+	// invocations.
+	//
 	// Note: we use a relative link target to make envs more easily portable
-	if err := os.Symlink(c.LinkToRealRelative("cachenv"), linkInPath); err != nil {
+	if err := os.Symlink(c.LinkToRealRelative("cachenv"), shim); err != nil {
 		return fmt.Errorf("failed to create symlink for %s: %w", cmd, err)
 	}
 
@@ -189,6 +198,8 @@ func (c *Cachenv) RefreshLinksFor(cmd string) error {
 	return nil
 }
 
+// RefreshLinksForAll refreshes the symlinks for all commands in the config
+// and cleans up by removing any symlinks that are not in the config.
 func (c *Cachenv) RefreshLinksForAll() error {
 	var err error
 
@@ -200,7 +211,7 @@ func (c *Cachenv) RefreshLinksForAll() error {
 	}
 
 	// Delete any symlinks that are not in the config
-	entries, err := os.ReadDir(c.DirLinksInPath())
+	entries, err := os.ReadDir(c.LinksDirShim())
 	if err != nil {
 		return fmt.Errorf("failed to read bin directory: %w", err)
 	}
@@ -212,7 +223,7 @@ func (c *Cachenv) RefreshLinksForAll() error {
 			if entry.Name() == "cachenv" {
 				continue
 			}
-			symlinkPath := filepath.Join(c.DirLinksInPath(), entry.Name())
+			symlinkPath := filepath.Join(c.LinksDirShim(), entry.Name())
 			if err := os.Remove(symlinkPath); err != nil {
 				return fmt.Errorf("failed to remove symlink for %s: %w", entry.Name(), err)
 			}
@@ -223,6 +234,7 @@ func (c *Cachenv) RefreshLinksForAll() error {
 	return nil
 }
 
+// TODO: this is bash-specific
 func (c *Cachenv) CreateActivateScript() error {
 	// Define the path to the activate script within the bin directory
 	activateScriptPath := filepath.Join(c.Dir, "activate")
@@ -307,10 +319,10 @@ else
     PS1="($(basename "$CACHENV")) ${PS1-}"
 fi
 export PS1
-`, LINKS_TO_REAL_NAME, LINKS_IN_PATH_NAME)
+`, LINKS_REAL, LINKS_SHIM)
 
 	// Ensure the bin directory exists
-	if err := os.MkdirAll(c.DirLinksInPath(), 0755); err != nil {
+	if err := os.MkdirAll(c.LinksDirShim(), 0755); err != nil {
 		return fmt.Errorf("failed to create bin directory: %w", err)
 	}
 
@@ -357,8 +369,10 @@ func (c *Cachenv) InitializeEnv() error {
 	return nil
 }
 
+// PrepareRealCommand returns an *exec.Cmd for executing the real command
+// with the given name and arguments.
 func (c *Cachenv) PrepareRealCommand(cmdName string, args ...string) *exec.Cmd {
-	return exec.Command(filepath.Join(c.DirLinksToReal(), cmdName), args...)
+	return exec.Command(filepath.Join(c.LinksDirReal(), cmdName), args...)
 }
 
 func (c *Cachenv) ExecuteRealCommand(cmdName string, args ...string) (ExecResult, error) {
@@ -570,7 +584,7 @@ func handleAdd(args []string) int {
 	return 0
 }
 
-// Returns the hash ID for the provided cached command (+ args)
+// handleKey returns the hash ID for the provided cached command (+ args)
 func handleKey(args []string) int {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: cachenv key <command>")
@@ -582,6 +596,7 @@ func handleKey(args []string) int {
 
 // Like touch(1), creates an empty cache entry, or updates the timestamp of an
 // existing on cache entry.
+//
 // TODO: actually do the latter
 func handleTouch(args []string) int {
 	if len(args) < 1 {
@@ -612,7 +627,8 @@ func handleTouch(args []string) int {
 	return 0
 }
 
-// Run the real command and print `diff -u <cached> <actual>`
+// handleDiff runs the provided real command and prints the result of
+// `diff -u <cached> <actual>`
 func handleDiff(args []string) int {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: cachenv diff <command>")
@@ -625,7 +641,7 @@ func handleDiff(args []string) int {
 		return 1
 	}
 
-	// Run the real command and pipe its output to diff
+	// Run the real command and pipe its output to diff(1)
 	cmd := c.PrepareRealCommand(args[0], args[1:]...)
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {

@@ -66,6 +66,7 @@ func (s *Store) WriteToCache(key CacheKey, result ExecResult) error {
 	return nil
 }
 
+// ReadFromCache reads and returns a cache entry as an ExecResult.
 func (s *Store) ReadFromCache(key CacheKey) (ExecResult, error) {
 	var stdout, stderr []byte
 	var exitCode int

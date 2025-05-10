@@ -30,9 +30,10 @@ Just like `virtualenv`, `cachenv` inserts symlinks at the front of your `PATH`.
 `cachenv` intercepts calls to cached programs and queries its cache.
 The cache key is a hash of the program name and arguments.
 On cache hits, cachenv replays stdout, stderr and the exit code.
-On misses, the original program is executed with the provided arguments, and the cache is updated.
+On misses, the original program is executed with the provided arguments, and the
+cache is updated.
 
-![cachenv](https://github.com/user-attachments/assets/7d50463a-b8d1-4bc4-a932-c5b68c4fd177)
+<img src="./doc/images/cachenv.svg">
 
 ## Usage
 Initialize and activate a new cachenv:
@@ -117,7 +118,7 @@ $ deactivate_cachenv
   <tr>
     <td></td>
     <td><strong>Cross-Environment Portability</strong></td>
-    <td>Enables sharing and reuse of cached data across different shells and 
+    <td>Enables sharing and reuse of cached data across different shells and
         operating systems.</td>
   </tr>
 </table>
