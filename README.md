@@ -6,8 +6,6 @@
 Versatile memoizing cache for program invocations, with a `virtualenv`-like
 interface.
 
-Note: this repo is still in early development; the README is aspirational.
-
 ## Overview
 `cachenv` is a lightweight tool that provides caching for your commands,
 scripts, and pipelines. In fact, any program that calls `exec()` can use `cachenv`.
