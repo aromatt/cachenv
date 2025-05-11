@@ -112,7 +112,7 @@ $ deactivate_cachenv
   <tr>
     <td>✅</td>
     <td><strong>Diff Mode</strong></td>
-    <td>Show changes in a program's behavior against a cached snapshot.</td>
+    <td>Shows changes in a program's behavior against a cached snapshot.</td>
   </tr>
   <tr>
     <td></td>
